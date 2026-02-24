@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "douliacameroun-825a6"
+  },
+  "targets": {
+    "douliacameroun-825a6": {
+      "hosting": {
+        "christiane": [
+          "coach-barreau-christiane"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
