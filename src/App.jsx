@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
 import './index.css';
+import React, { useState, useEffect } from 'react';
 
 const App = () => {
   // --- ÉTAT DU QUIZ ---
