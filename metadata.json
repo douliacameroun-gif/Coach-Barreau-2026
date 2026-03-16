@@ -1,0 +1,5 @@
+{
+  "name": "Coach Barreau 2026",
+  "description": "Assistant juridique expert pour la préparation au barreau du Cameroun 2026.",
+  "requestFramePermissions": ["microphone"]
+}
