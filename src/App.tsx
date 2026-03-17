@@ -18,7 +18,9 @@ import {
   MicOff,
   Paperclip,
   X,
-  File
+  File,
+  Menu,
+  Trash2
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
@@ -71,15 +73,36 @@ interface Message {
 // --- Components ---
 
 export default function App() {
+  const [histories, setHistories] = useState<Record<string, Message[]>>(() => {
+    const saved = localStorage.getItem('coach_barreau_histories');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        // Convert string timestamps back to Date objects
+        Object.keys(parsed).forEach(key => {
+          parsed[key] = parsed[key].map((msg: any) => ({
+            ...msg,
+            timestamp: new Date(msg.timestamp)
+          }));
+        });
+        return parsed;
+      } catch (e) {
+        return {};
+      }
+    }
+    return {};
+  });
+
+  const [activeSubject, setActiveSubject] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isTtsEnabled, setIsTtsEnabled] = useState(true);
   const [isListening, setIsListening] = useState(false);
   const [isStarted, setIsStarted] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ file: File; base64: string } | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [activeSubject, setActiveSubject] = useState<string | null>(null);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -89,6 +112,29 @@ export default function App() {
   // Initialize Gemini
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
   const chatRef = useRef<any>(null);
+
+  // Save histories to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('coach_barreau_histories', JSON.stringify(histories));
+  }, [histories]);
+
+  // Load messages when activeSubject changes
+  useEffect(() => {
+    if (activeSubject) {
+      setMessages(histories[activeSubject] || []);
+      // Reset chat session when switching subjects to keep context clean per subject
+      chatRef.current = ai.chats.create({
+        model: "gemini-3-flash-preview",
+        config: {
+          systemInstruction: `${SYSTEM_INSTRUCTION}\n\nLe sujet actuel de révision est : ${activeSubject}. Concentre-toi sur cette matière.`,
+        },
+        history: (histories[activeSubject] || []).map(m => ({
+          role: m.role,
+          parts: [{ text: m.content }]
+        }))
+      });
+    }
+  }, [activeSubject]);
 
   useEffect(() => {
     if (!chatRef.current) {
@@ -140,12 +186,19 @@ export default function App() {
   };
 
   const handleInitialGreeting = async () => {
+    if (messages.length > 0) return; // Don't greet if history exists
     setIsTyping(true);
     try {
       const response = await chatRef.current.sendMessage({ message: "Bonjour Coach, je suis prête pour ma session de révision." });
       const text = response.text;
       const newMessage: Message = { role: 'model', content: text, timestamp: new Date() };
-      setMessages([newMessage]);
+      
+      const newMessages = [newMessage];
+      setMessages(newMessages);
+      if (activeSubject) {
+        setHistories(prev => ({ ...prev, [activeSubject]: newMessages }));
+      }
+      
       if (isTtsEnabled) generateSpeech(text);
     } catch (error) {
       console.error("Error getting greeting:", error);
@@ -205,7 +258,12 @@ export default function App() {
     if (!text.trim() || isTyping) return;
     
     const userMessage: Message = { role: 'user', content: text, timestamp: new Date() };
-    setMessages(prev => [...prev, userMessage]);
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
+    if (activeSubject) {
+      setHistories(prev => ({ ...prev, [activeSubject]: updatedMessages }));
+    }
+    
     setInput('');
     setIsTyping(true);
 
@@ -213,7 +271,13 @@ export default function App() {
       const response = await chatRef.current.sendMessage({ message: text });
       const responseText = response.text;
       const modelMessage: Message = { role: 'model', content: responseText, timestamp: new Date() };
-      setMessages(prev => [...prev, modelMessage]);
+      
+      const finalMessages = [...updatedMessages, modelMessage];
+      setMessages(finalMessages);
+      if (activeSubject) {
+        setHistories(prev => ({ ...prev, [activeSubject]: finalMessages }));
+      }
+      
       if (isTtsEnabled) generateSpeech(responseText);
     } catch (error) {
       console.error("Chat Error:", error);
@@ -237,7 +301,12 @@ export default function App() {
       } : undefined
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    const updatedWithUser = [...messages, userMessage];
+    setMessages(updatedWithUser);
+    if (activeSubject) {
+      setHistories(prev => ({ ...prev, [activeSubject]: updatedWithUser }));
+    }
+
     const currentInput = input;
     const currentFile = selectedFile;
     
@@ -263,15 +332,26 @@ export default function App() {
 
       const text = response.text;
       const modelMessage: Message = { role: 'model', content: text, timestamp: new Date() };
-      setMessages(prev => [...prev, modelMessage]);
+      
+      const finalMessages = [...updatedWithUser, modelMessage];
+      setMessages(finalMessages);
+      if (activeSubject) {
+        setHistories(prev => ({ ...prev, [activeSubject]: finalMessages }));
+      }
+      
       if (isTtsEnabled) generateSpeech(text);
     } catch (error) {
       console.error("Chat Error:", error);
-      setMessages(prev => [...prev, { 
+      const errorMessage: Message = { 
         role: 'model', 
         content: "Désolé Christiane, j'ai rencontré une petite difficulté technique lors de l'analyse. Peux-tu réessayer ?", 
         timestamp: new Date() 
-      }]);
+      };
+      const finalWithErr = [...updatedWithUser, errorMessage];
+      setMessages(finalWithErr);
+      if (activeSubject) {
+        setHistories(prev => ({ ...prev, [activeSubject]: finalWithErr }));
+      }
     } finally {
       setIsTyping(false);
     }
@@ -291,21 +371,49 @@ export default function App() {
     }
   };
 
+  const printHistory = () => {
+    window.print();
+  };
+
+  const clearHistory = () => {
+    if (activeSubject) {
+      const newHistories = { ...histories };
+      delete newHistories[activeSubject];
+      setHistories(newHistories);
+      setMessages([]);
+      // Re-initialize chat
+      chatRef.current = ai.chats.create({
+        model: "gemini-3-flash-preview",
+        config: {
+          systemInstruction: `${SYSTEM_INSTRUCTION}\n\nLe sujet actuel de révision est : ${activeSubject}. Concentre-toi sur cette matière.`,
+        },
+      });
+    }
+  };
+
   const selectSubject = (subjectName: string) => {
     setActiveSubject(subjectName);
-    setInput(`Je souhaite réviser le sujet suivant : ${subjectName}`);
-    setTimeout(() => {
-      const btn = document.getElementById('send-button');
-      btn?.click();
-    }, 100);
+    setIsSidebarOpen(false); // Close sidebar on mobile
+    
+    // If no history for this subject, send a trigger message
+    if (!histories[subjectName] || histories[subjectName].length === 0) {
+      setInput(`Je souhaite réviser le sujet suivant : ${subjectName}`);
+      setTimeout(() => {
+        const btn = document.getElementById('send-button');
+        btn?.click();
+      }, 100);
+    }
   };
 
   return (
-    <div className="flex h-screen bg-[#f8f9fa]">
+    <div className="flex h-[100dvh] bg-[#f8f9fa] overflow-hidden safe-top safe-bottom">
       {/* Sidebar - Right Block for Subjects and Info */}
-      <aside className="w-[380px] bg-slate-900 text-white flex flex-col border-l border-slate-800 order-2">
-        <div className="p-6 border-b border-slate-800">
-          <div className="flex items-center gap-3 mb-4">
+      <aside className={cn(
+        "fixed inset-y-0 right-0 z-40 w-[300px] sm:w-[380px] bg-slate-900 text-white flex flex-col border-l border-slate-800 transition-transform duration-300 lg:relative lg:translate-x-0 order-2",
+        isSidebarOpen ? "translate-x-0" : "translate-x-full"
+      )}>
+        <div className="p-4 sm:p-6 border-b border-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
               <Scale className="text-white w-5 h-5" />
             </div>
@@ -314,14 +422,22 @@ export default function App() {
               <p className="text-[9px] text-indigo-400 uppercase tracking-[0.2em] font-bold">Session 2026</p>
             </div>
           </div>
+          <button 
+            onClick={() => setIsSidebarOpen(false)}
+            className="lg:hidden p-2 text-slate-400 hover:text-white"
+          >
+            <X size={20} />
+          </button>
+        </div>
 
+        <div className="p-4 border-b border-slate-800">
           <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
             <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Candidate</p>
             <p className="text-sm font-semibold text-white">Christiane Endalle</p>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
           <section>
             <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
               <BookOpen size={12} className="text-indigo-500" /> Matières à réviser
@@ -344,14 +460,58 @@ export default function App() {
                   )}>
                     <sub.icon size={16} />
                   </div>
-                  <span className={cn(
-                    "text-xs font-semibold leading-tight",
-                    activeSubject === sub.name ? "text-white" : "text-slate-300 group-hover:text-white"
-                  )}>
-                    {sub.name}
-                  </span>
+                  <div className="flex-1 min-w-0">
+                    <span className={cn(
+                      "text-xs font-semibold leading-tight block truncate",
+                      activeSubject === sub.name ? "text-white" : "text-slate-300 group-hover:text-white"
+                    )}>
+                      {sub.name}
+                    </span>
+                    {histories[sub.name] && histories[sub.name].length > 0 && (
+                      <span className="text-[9px] text-indigo-300/60 font-medium">
+                        {histories[sub.name].length} messages sauvegardés
+                      </span>
+                    )}
+                  </div>
                 </button>
               ))}
+            </div>
+          </section>
+
+          {activeSubject && histories[activeSubject] && histories[activeSubject].length > 0 && (
+            <section className="pt-4 border-t border-slate-800 space-y-2">
+              <button
+                onClick={printHistory}
+                className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-all text-[10px] font-bold uppercase tracking-wider"
+              >
+                <FileText size={14} /> Exporter en PDF
+              </button>
+              <button
+                onClick={clearHistory}
+                className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-all text-[10px] font-bold uppercase tracking-wider"
+              >
+                <Trash2 size={14} /> Effacer l'historique
+              </button>
+            </section>
+          )}
+
+          <section className="bg-indigo-600/5 rounded-2xl p-4 border border-indigo-500/10">
+            <h3 className="text-xs font-bold text-indigo-400 mb-2 flex items-center gap-2">
+              <RefreshCw size={14} className="animate-spin-slow" /> Compte à rebours
+            </h3>
+            <div className="flex justify-between text-center">
+              <div>
+                <p className="text-lg font-bold text-white">
+                  {Math.max(0, Math.floor((new Date('2026-04-18').getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)))}
+                </p>
+                <p className="text-[8px] text-slate-500 uppercase font-bold">Jours</p>
+              </div>
+              <div className="w-px h-8 bg-slate-800 self-center" />
+              <div className="flex-1 px-2">
+                <p className="text-[10px] text-slate-400 font-medium leading-tight">
+                  Avant le grand jour (18 Avril 2026)
+                </p>
+              </div>
             </div>
           </section>
 
@@ -377,7 +537,7 @@ export default function App() {
               )}
             >
               {isTtsEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
-              {isTtsEnabled ? "Voix Active" : "Voix Muette"}
+              <span className="hidden sm:inline">{isTtsEnabled ? "Voix Active" : "Voix Muette"}</span>
             </button>
             <button 
               onClick={() => window.location.reload()}
@@ -390,8 +550,36 @@ export default function App() {
         </div>
       </aside>
 
+      {/* Overlay for mobile sidebar */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
       {/* Main Block - Chatbot and Discussion */}
-      <main className="flex-1 flex flex-col bg-white order-1 relative">
+      <main className="flex-1 flex flex-col bg-white order-1 relative min-w-0">
+        {/* Mobile Header */}
+        <header className="lg:hidden flex items-center justify-between p-4 border-b border-slate-100 bg-white sticky top-0 z-20">
+          <div className="flex items-center gap-2">
+            <Scale className="text-indigo-600 w-5 h-5" />
+            <span className="font-bold text-slate-900 text-sm">Coach Barreau</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {activeSubject && (
+              <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-full truncate max-w-[120px]">
+                {activeSubject}
+              </span>
+            )}
+            <button 
+              onClick={() => setIsSidebarOpen(true)}
+              className="p-2 text-slate-600 hover:bg-slate-50 rounded-lg"
+            >
+              <Menu size={20} />
+            </button>
+          </div>
+        </header>
         {!isStarted && (
           <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center">
             <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-xl shadow-indigo-500/30 mb-6 animate-bounce">
@@ -414,8 +602,15 @@ export default function App() {
         {/* Chat Area */}
         <div 
           ref={scrollRef}
-          className="flex-1 overflow-y-auto p-10 space-y-10 scroll-smooth"
+          className="flex-1 overflow-y-auto p-4 sm:p-10 space-y-6 sm:space-y-10 scroll-smooth"
         >
+          {messages.length === 0 && !isTyping && (
+            <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-60">
+              <BookOpen size={48} className="text-indigo-200 mb-4" />
+              <h3 className="text-lg font-bold text-slate-400">Choisissez une matière</h3>
+              <p className="text-sm text-slate-400 max-w-[200px]">Sélectionnez un sujet dans le menu pour commencer ou reprendre vos révisions.</p>
+            </div>
+          )}
           {messages.map((msg, i) => (
             <div 
               key={i} 
@@ -425,7 +620,7 @@ export default function App() {
               )}
             >
               <div className={cn(
-                "flex gap-4 max-w-[85%]",
+                "flex gap-3 sm:gap-4 max-w-[90%] sm:max-w-[85%]",
                 msg.role === 'user' ? "flex-row-reverse" : "flex-row"
               )}>
                 <div className={cn(
@@ -479,11 +674,11 @@ export default function App() {
           
           {isTyping && (
             <div className="flex justify-start animate-in fade-in duration-300">
-              <div className="flex gap-6">
-                <div className="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                  <Loader2 className="text-white w-6 h-6 animate-spin" />
+              <div className="flex gap-3 sm:gap-6">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                  <Loader2 className="text-white w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
                 </div>
-                <div className="bg-indigo-50/50 border border-indigo-100 p-5 rounded-[2rem] rounded-tl-none flex items-center gap-2">
+                <div className="bg-indigo-50/50 border border-indigo-100 p-3 sm:p-5 rounded-2xl sm:rounded-[2rem] rounded-tl-none flex items-center gap-2">
                   <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
                   <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
                   <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"></span>
@@ -494,28 +689,28 @@ export default function App() {
         </div>
 
         {/* Input Area */}
-        <div className="p-6 bg-white border-t border-slate-100">
+        <div className="p-4 sm:p-6 bg-white border-t border-slate-100">
           {selectedFile && (
-            <div className="mb-4 p-3 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-center justify-between animate-in slide-in-from-bottom-2">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-white rounded-xl text-indigo-600 shadow-sm">
-                  <File size={18} />
+            <div className="mb-3 sm:mb-4 p-2 sm:p-3 bg-indigo-50 border border-indigo-100 rounded-xl sm:rounded-2xl flex items-center justify-between animate-in slide-in-from-bottom-2">
+              <div className="flex items-center gap-2 sm:gap-3">
+                <div className="p-1.5 sm:p-2 bg-white rounded-lg sm:rounded-xl text-indigo-600 shadow-sm">
+                  <File size={16} />
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-slate-700 truncate max-w-[250px]">{selectedFile.file.name}</p>
-                  <p className="text-[10px] text-indigo-500 uppercase font-bold tracking-wider">Document prêt</p>
+                  <p className="text-xs sm:text-sm font-bold text-slate-700 truncate max-w-[150px] sm:max-w-[250px]">{selectedFile.file.name}</p>
+                  <p className="text-[9px] sm:text-[10px] text-indigo-500 uppercase font-bold tracking-wider">Document prêt</p>
                 </div>
               </div>
               <button 
                 onClick={() => setSelectedFile(null)}
-                className="p-1.5 text-slate-400 hover:text-red-500 transition-colors bg-white rounded-lg shadow-sm border border-slate-100"
+                className="p-1 text-slate-400 hover:text-red-500 transition-colors bg-white rounded-lg shadow-sm border border-slate-100"
               >
-                <X size={16} />
+                <X size={14} />
               </button>
             </div>
           )}
           
-          <form onSubmit={handleSend} className="relative flex items-center gap-3">
+          <form onSubmit={handleSend} className="relative flex items-center gap-2 sm:gap-3">
             <input 
               type="file" 
               ref={fileInputRef} 
@@ -526,31 +721,31 @@ export default function App() {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="p-3.5 rounded-xl bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600 hover:border-indigo-200 transition-all hover:bg-white hover:shadow-sm"
+              className="p-2.5 sm:p-3.5 rounded-lg sm:rounded-xl bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600 hover:border-indigo-200 transition-all hover:bg-white hover:shadow-sm"
               title="Ajouter un document"
             >
-              <Paperclip size={20} />
+              <Paperclip size={18} />
             </button>
             <button
               type="button"
               onClick={toggleListening}
               className={cn(
-                "p-3.5 rounded-xl transition-all duration-300 border",
+                "p-2.5 sm:p-3.5 rounded-lg sm:rounded-xl transition-all duration-300 border",
                 isListening 
                   ? "bg-red-500 text-white border-red-600 animate-pulse shadow-lg shadow-red-200" 
                   : "bg-slate-50 text-slate-400 border-slate-200 hover:text-indigo-600 hover:border-indigo-200 hover:bg-white hover:shadow-sm"
               )}
               title={isListening ? "Arrêter l'écoute" : "Parler au Coach"}
             >
-              {isListening ? <MicOff size={20} /> : <Mic size={20} />}
+              {isListening ? <MicOff size={18} /> : <Mic size={18} />}
             </button>
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={isListening ? "Le Coach vous écoute..." : "Répondez au Coach..."}
+              placeholder={isListening ? "Écoute..." : "Répondez..."}
               className={cn(
-                "flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-6 py-3.5 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all text-base",
+                "flex-1 bg-slate-50 border border-slate-200 rounded-xl sm:rounded-2xl px-3 sm:px-6 py-2.5 sm:py-3.5 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all text-sm sm:text-base",
                 isListening && "placeholder:text-red-400"
               )}
             />
@@ -558,9 +753,9 @@ export default function App() {
               id="send-button"
               type="submit"
               disabled={(!input.trim() && !selectedFile) || isTyping}
-              className="bg-indigo-600 text-white p-3.5 rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 transition-all shadow-lg shadow-indigo-200"
+              className="bg-indigo-600 text-white p-2.5 sm:p-3.5 rounded-lg sm:rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 transition-all shadow-lg shadow-indigo-200"
             >
-              <Send size={20} />
+              <Send size={18} />
             </button>
           </form>
         </div>
