@@ -21,13 +21,31 @@ import {
   File,
   Menu,
   Trash2,
-  Download
+  Download,
+  Lock,
+  LogOut,
+  CreditCard,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { 
+  auth, 
+  db, 
+  loginWithGoogle, 
+  logout, 
+  onAuthStateChanged, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  serverTimestamp, 
+  onSnapshot,
+  User as FirebaseUser
+} from './firebase';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -38,7 +56,7 @@ function cn(...inputs: ClassValue[]) {
 const SUBJECTS = [
   { id: 'famille', name: 'Droit patrimonial de la famille', icon: Users, color: 'text-blue-600' },
   { id: 'procedure', name: 'Procédure civile', icon: Scale, color: 'text-indigo-600' },
-  { id: 'penal', name: 'Droit pénal', icon: ShieldAlert, color: 'text-red-600' },
+  { id: 'penal', name: 'Droit pénal et procédure pénale', icon: ShieldAlert, color: 'text-red-600' },
   { id: 'execution', name: "Voies d'exécution", icon: Gavel, color: 'text-amber-600' },
   { id: 'social', name: 'Droit social', icon: FileText, color: 'text-emerald-600' },
   { id: 'administratif', name: 'Droit administratif', icon: Building2, color: 'text-purple-600' },
@@ -54,22 +72,26 @@ RÈGLES DE FORMATAGE "VOICE-READY" ET "CLEAN-DISPLAY" (STRICTES) :
 ❺ Style de Ponctuation : Utilise uniquement le point, la virgule, le point d'interrogation et le point d'exclamation pour une synthèse vocale fluide.
 ❻ Simplicité Vocale : Fais des paragraphes très courts et aérés. Chaque phrase doit être simple, directe et courte. Saute des lignes entre chaque idée.
 
-RÈGLE DE SYNTHÈSE PDF (CRITIQUE) :
-À la fin de chaque résolution de cas pratique, de question juridique ou de problème complexe, tu DOIS proposer une synthèse structurée.
+RÈGLE DE SYNTHÈSE PDF (CRITIQUE - ENRICHIE) :
+À la fin de chaque résolution de cas pratique, de question juridique ou de problème complexe, tu DOIS proposer une synthèse structurée et EXTRÊMEMENT DÉTAILLÉE. 
+Le but est que Christiane assimile parfaitement la leçon. Ne sois pas avare de mots. Explique les concepts, les nuances et les exceptions.
 Cette synthèse doit être incluse à la fin de ton message, délimitée par les balises [SYNTHESE] et [/SYNTHESE].
 Le contenu entre ces balises doit être structuré ainsi :
-- TITRE : [Titre du sujet]
-- RAPPEL DES FAITS : [Bref résumé]
-- PROBLÈME JURIDIQUE : [La question de droit]
-- SOLUTION : [La réponse détaillée]
-- ARTICLES DE LOI : [Liste des articles cités]
-- CONSEIL DU COACH : [Un conseil pour l'examen]
+- TITRE : [Titre du sujet complet et explicite]
+- RAPPEL DES FAITS : [Résumé détaillé des faits, incluant les enjeux]
+- PROBLÈME JURIDIQUE : [La question de droit formulée de manière précise et académique]
+- ANALYSE JURIDIQUE : [Développement approfondi de la règle de droit applicable, explication du texte de loi, et démonstration de son application au cas d'espèce. C'est la partie la plus importante pour l'assimilation.]
+- SOLUTION : [La réponse finale claire, motivée et sans ambiguïté]
+- ARTICLES DE LOI : [Liste exhaustive des articles cités avec un bref rappel de leur contenu]
+- CONSEIL DU COACH : [Un conseil stratégique pour l'examen, une astuce de mémorisation ou un piège à éviter]
 
-Mission :
-❶ Évaluation : Pose des questions de cours ou des mini-cas pratiques sur les 6 matières exigées.
-❷ Correction : Attends la réponse de Christiane avant de donner la solution. Cite les articles de loi camerounais.
-❸ Analyse : Analyse les documents téléchargés en respectant ces règles.
-❹ Langue : Français exclusivement.
+RÈGLE D'INTERACTION (CRITIQUE) :
+Dès qu'une matière est sélectionnée ou qu'une nouvelle session commence, tu dois IMMÉDIATEMENT proposer à Christiane une liste de choix (sans les détailler) comprenant :
+- Des questions de cours.
+- Des sujets de réflexion.
+- Des cas pratiques.
+- Des problèmes juridiques spécifiques à la matière.
+Tu ne dois commencer le développement approfondi qu'UNE FOIS que Christiane a fait son choix parmi tes propositions.
 
 Commence par saluer Christiane chaleureusement et invite-la à choisir une matière dans le panneau latéral.`;
 
@@ -93,28 +115,108 @@ interface Session {
   timestamp: Date;
 }
 
-// --- Components ---
+interface UserProfile {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL: string;
+  firstLoginAt: any;
+  isPremium: boolean;
+  createdAt: any;
+  deviceId?: string;
+}
+
+// --- Auth Components ---
+
+function Login({ onLogin }: { onLogin: () => void }) {
+  return (
+    <div className="h-screen flex flex-col items-center justify-center bg-slate-900 p-6 text-center">
+      <div className="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center shadow-2xl shadow-indigo-500/20 mb-8 animate-in fade-in zoom-in duration-700">
+        <Scale className="text-white w-10 h-10" />
+      </div>
+      <h1 className="text-3xl font-bold text-white mb-3 tracking-tight">Coach Barreau 2026</h1>
+      <p className="text-slate-400 max-w-xs mb-10 leading-relaxed">
+        Votre compagnon d'étude intelligent pour réussir l'examen du barreau au Cameroun.
+      </p>
+      <button
+        onClick={onLogin}
+        className="flex items-center gap-3 bg-white text-slate-900 px-8 py-4 rounded-2xl font-bold text-lg hover:bg-slate-100 transition-all shadow-xl active:scale-95 group"
+      >
+        <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
+        Se connecter avec Google
+      </button>
+      <p className="mt-8 text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+        Accès réservé aux candidats
+      </p>
+    </div>
+  );
+}
+
+function TrialExpired({ onLogout }: { onLogout: () => void }) {
+  return (
+    <div className="h-screen flex flex-col items-center justify-center bg-slate-900 p-8 text-center">
+      <div className="w-20 h-20 bg-red-500/10 rounded-3xl flex items-center justify-center mb-8 border border-red-500/20">
+        <Lock className="text-red-500 w-10 h-10" />
+      </div>
+      <h1 className="text-2xl font-bold text-white mb-4">Période d'essai terminée</h1>
+      <div className="bg-slate-800/50 rounded-2xl p-6 border border-slate-700/50 max-w-sm mb-8">
+        <p className="text-slate-300 text-sm leading-relaxed mb-6">
+          Votre essai gratuit de 24 heures a expiré. Pour continuer à utiliser le Coach Barreau et accéder à toutes les matières, veuillez activer votre accès premium.
+        </p>
+        <div className="text-left space-y-4">
+          <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">Instructions de paiement</p>
+          <div className="space-y-2">
+            <p className="text-xs text-slate-400">❶ Envoyez votre paiement via Orange Money ou MTN Mobile Money.</p>
+            <p className="text-xs text-slate-400">❷ Contactez Christiane Endalle avec votre preuve de paiement.</p>
+            <p className="text-xs text-slate-400">❸ Votre compte sera activé instantanément.</p>
+          </div>
+        </div>
+      </div>
+      <button
+        onClick={onLogout}
+        className="text-slate-400 hover:text-white text-sm font-medium flex items-center gap-2 transition-colors"
+      >
+        <LogOut size={16} /> Se déconnecter
+      </button>
+    </div>
+  );
+}
+
+function DeviceBlocked({ onLogout }: { onLogout: () => void }) {
+  return (
+    <div className="h-screen flex flex-col items-center justify-center bg-slate-900 p-8 text-center">
+      <div className="w-20 h-20 bg-amber-500/10 rounded-3xl flex items-center justify-center mb-8 border border-amber-500/20">
+        <ShieldAlert className="text-amber-500 w-10 h-10" />
+      </div>
+      <h1 className="text-2xl font-bold text-white mb-4">Terminal déjà lié</h1>
+      <div className="bg-slate-800/50 rounded-2xl p-6 border border-slate-700/50 max-w-sm mb-8">
+        <p className="text-slate-300 text-sm leading-relaxed">
+          Ce téléphone ou ordinateur est déjà lié à un autre compte Google. 
+          Pour des raisons de sécurité et pour éviter les abus, un seul compte est autorisé par terminal.
+        </p>
+        <p className="mt-4 text-xs text-slate-400 italic">
+          Veuillez vous connecter avec votre compte principal ou contacter Christiane en cas d'erreur.
+        </p>
+      </div>
+      <button
+        onClick={onLogout}
+        className="text-slate-400 hover:text-white text-sm font-medium flex items-center gap-2 transition-colors"
+      >
+        <LogOut size={16} /> Se déconnecter
+      </button>
+    </div>
+  );
+}
+
+// --- Main App ---
 
 export default function App() {
-  const [sessions, setSessions] = useState<Session[]>(() => {
-    const saved = localStorage.getItem('coach_barreau_sessions');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return parsed.map((s: any) => ({
-          ...s,
-          timestamp: new Date(s.timestamp),
-          messages: s.messages.map((m: any) => ({
-            ...m,
-            timestamp: new Date(m.timestamp)
-          }))
-        }));
-      } catch (e) {
-        return [];
-      }
-    }
-    return [];
-  });
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [trialRemaining, setTrialRemaining] = useState<number | null>(null);
+  const [isDeviceBlocked, setIsDeviceBlocked] = useState(false);
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeSubject, setActiveSubject] = useState<string | null>(null);
@@ -140,10 +242,127 @@ export default function App() {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
   const chatRef = useRef<any>(null);
 
+  // Get or Create Device ID
+  const getDeviceId = () => {
+    let id = localStorage.getItem('coach_barreau_device_id');
+    if (!id) {
+      id = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      localStorage.setItem('coach_barreau_device_id', id);
+    }
+    return id;
+  };
+
+  // Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setIsAuthLoading(true);
+      setIsDeviceBlocked(false);
+      
+      if (firebaseUser) {
+        setUser(firebaseUser);
+        const deviceId = getDeviceId();
+        
+        // Check Device Binding
+        const deviceDocRef = doc(db, 'devices', deviceId);
+        const deviceDoc = await getDoc(deviceDocRef);
+        
+        if (deviceDoc.exists() && deviceDoc.data().uid !== firebaseUser.uid && firebaseUser.email !== 'douliacameroun@gmail.com') {
+          // Device is already claimed by someone else
+          setIsDeviceBlocked(true);
+          setIsAuthLoading(false);
+          return;
+        }
+
+        // Sync Profile
+        const userDocRef = doc(db, 'users', firebaseUser.uid);
+        const userDoc = await getDoc(userDocRef);
+        
+        if (!userDoc.exists()) {
+          const newProfile: UserProfile = {
+            uid: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            displayName: firebaseUser.displayName || 'Étudiant',
+            photoURL: firebaseUser.photoURL || '',
+            firstLoginAt: new Date().toISOString(),
+            isPremium: firebaseUser.email === 'douliacameroun@gmail.com', // Christiane is always premium
+            createdAt: serverTimestamp(),
+            deviceId: deviceId
+          };
+          await setDoc(userDocRef, newProfile);
+          
+          // Claim Device
+          if (!deviceDoc.exists()) {
+            await setDoc(deviceDocRef, { uid: firebaseUser.uid, claimedAt: serverTimestamp() });
+          }
+          
+          setUserProfile(newProfile);
+        } else {
+          const data = userDoc.data() as UserProfile;
+          // If user doesn't have a deviceId yet, bind it
+          if (!data.deviceId) {
+            await setDoc(userDocRef, { deviceId: deviceId }, { merge: true });
+            if (!deviceDoc.exists()) {
+              await setDoc(deviceDocRef, { uid: firebaseUser.uid, claimedAt: serverTimestamp() });
+            }
+          }
+          setUserProfile({ ...data, isPremium: data.isPremium || firebaseUser.email === 'douliacameroun@gmail.com' });
+        }
+      } else {
+        setUser(null);
+        setUserProfile(null);
+      }
+      setIsAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Trial Timer Logic
+  useEffect(() => {
+    if (userProfile && !userProfile.isPremium) {
+      const timer = setInterval(() => {
+        const firstLogin = new Date(userProfile.firstLoginAt).getTime();
+        const now = new Date().getTime();
+        const diff = now - firstLogin;
+        const twentyFourHours = 24 * 60 * 60 * 1000;
+        const remaining = Math.max(0, twentyFourHours - diff);
+        setTrialRemaining(remaining);
+      }, 1000);
+      return () => clearInterval(timer);
+    } else {
+      setTrialRemaining(null);
+    }
+  }, [userProfile]);
+
   // Save sessions to localStorage whenever they change
   useEffect(() => {
-    localStorage.setItem('coach_barreau_sessions', JSON.stringify(sessions));
-  }, [sessions]);
+    if (user) {
+      localStorage.setItem(`coach_barreau_sessions_${user.uid}`, JSON.stringify(sessions));
+    }
+  }, [sessions, user]);
+
+  // Load user specific sessions
+  useEffect(() => {
+    if (user) {
+      const saved = localStorage.getItem(`coach_barreau_sessions_${user.uid}`);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          setSessions(parsed.map((s: any) => ({
+            ...s,
+            timestamp: new Date(s.timestamp),
+            messages: s.messages.map((m: any) => ({
+              ...m,
+              timestamp: new Date(m.timestamp)
+            }))
+          })));
+        } catch (e) {
+          setSessions([]);
+        }
+      } else {
+        setSessions([]);
+      }
+    }
+  }, [user]);
 
   // Load chat session when activeSessionId changes
   useEffect(() => {
@@ -210,14 +429,19 @@ export default function App() {
 
   const startSession = () => {
     setIsStarted(true);
-    handleInitialGreeting();
+    // No initial greeting here, wait for subject selection or user input
   };
 
-  const handleInitialGreeting = async () => {
+  const handleInitialGreeting = async (subject?: string) => {
     if (messages.length > 0) return;
     setIsTyping(true);
     try {
-      const response = await chatRef.current.sendMessage({ message: "Bonjour Coach, je suis prête pour ma session de révision." });
+      const userName = userProfile?.displayName?.split(' ')[0] || 'Christiane';
+      const prompt = subject 
+        ? `Bonjour Coach, je suis ${userName}. Je souhaite réviser la matière suivante : ${subject}. Propose-moi des sujets, questions ou cas pratiques à traiter.`
+        : `Bonjour Coach, je suis ${userName}. Je suis prête pour ma session de révision.`;
+        
+      const response = await chatRef.current.sendMessage({ message: prompt });
       const text = response.text;
       
       const { cleanContent, synthesis } = extractSynthesis(text);
@@ -508,7 +732,7 @@ export default function App() {
     
     // Trigger initial greeting for the new session
     setTimeout(() => {
-      handleInitialGreeting();
+      handleInitialGreeting(subject);
     }, 100);
   };
 
@@ -546,6 +770,29 @@ export default function App() {
     }
   };
 
+  if (isAuthLoading) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-slate-900 text-white">
+        <Scale className="text-indigo-500 w-12 h-12 animate-pulse mb-4" />
+        <p className="text-slate-400 font-medium animate-pulse">Chargement du Coach Barreau...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Login onLogin={loginWithGoogle} />;
+  }
+
+  if (isDeviceBlocked) {
+    return <DeviceBlocked onLogout={logout} />;
+  }
+
+  const isTrialExpired = !userProfile?.isPremium && trialRemaining !== null && trialRemaining <= 0;
+
+  if (isTrialExpired) {
+    return <TrialExpired onLogout={logout} />;
+  }
+
   return (
     <div className="flex h-[100dvh] bg-[#f8f9fa] overflow-hidden safe-top safe-bottom">
       {/* Sidebar - Right Block for Subjects and Info */}
@@ -572,10 +819,44 @@ export default function App() {
         </div>
 
         <div className="p-4 border-b border-slate-800">
-          <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
-            <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Candidate</p>
-            <p className="text-sm font-semibold text-white">Christiane Endalle</p>
+          <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full overflow-hidden border border-slate-700">
+              <img 
+                src={user?.photoURL || "https://i.postimg.cc/cJQfnr2V/Whats-App-Image-2025-09-10-at-11-07-09-(1).jpg"} 
+                alt="Profile" 
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Utilisateur</p>
+              <p className="text-sm font-semibold text-white truncate">{user?.displayName || "Christiane Endalle"}</p>
+            </div>
           </div>
+          
+          {!userProfile?.isPremium && trialRemaining !== null && (
+            <div className="mt-3 bg-indigo-600/10 rounded-xl p-3 border border-indigo-500/20">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">Essai Gratuit</span>
+                <span className="text-[10px] font-mono font-bold text-indigo-300">
+                  {Math.floor(trialRemaining / 3600)}h {Math.floor((trialRemaining % 3600) / 60)}m {trialRemaining % 60}s
+                </span>
+              </div>
+              <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-indigo-500 transition-all duration-1000"
+                  style={{ width: `${(trialRemaining / (24 * 3600)) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+          
+          {userProfile?.isPremium && (
+            <div className="mt-3 bg-emerald-500/10 rounded-xl p-3 border border-emerald-500/20 flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">Accès Premium Activé</span>
+            </div>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
@@ -700,28 +981,26 @@ export default function App() {
           </section>
         </div>
 
-        <div className="p-6 border-t border-slate-800 bg-slate-900/50">
-          <div className="flex items-center justify-between">
-            <button 
-              onClick={() => setIsTtsEnabled(!isTtsEnabled)}
-              className={cn(
-                "flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all border font-bold text-xs uppercase tracking-wider",
-                isTtsEnabled 
-                  ? "bg-indigo-600/10 border-indigo-600/20 text-indigo-400" 
-                  : "bg-slate-800 border-slate-700 text-slate-500"
-              )}
-            >
-              {isTtsEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
-              <span className="hidden sm:inline">{isTtsEnabled ? "Voix Active" : "Voix Muette"}</span>
-            </button>
-            <button 
-              onClick={() => window.location.reload()}
-              className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-400 hover:text-white transition-colors"
-              title="Nouvelle session"
-            >
-              <RefreshCw size={18} />
-            </button>
-          </div>
+        <div className="p-6 border-t border-slate-800 bg-slate-900/50 flex items-center justify-between">
+          <button 
+            onClick={() => setIsTtsEnabled(!isTtsEnabled)}
+            className={cn(
+              "flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all border font-bold text-xs uppercase tracking-wider",
+              isTtsEnabled 
+                ? "bg-indigo-600/10 border-indigo-600/20 text-indigo-400" 
+                : "bg-slate-800 border-slate-700 text-slate-500"
+            )}
+          >
+            {isTtsEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+            <span className="hidden sm:inline">{isTtsEnabled ? "Voix Active" : "Voix Muette"}</span>
+          </button>
+          <button 
+            onClick={logout}
+            className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-400 hover:text-white transition-colors"
+            title="Se déconnecter"
+          >
+            <LogOut size={18} />
+          </button>
         </div>
       </aside>
 
@@ -762,8 +1041,7 @@ export default function App() {
             </div>
             <h2 className="text-2xl font-bold text-slate-900 mb-3">Prête pour vos révisions ?</h2>
             <p className="text-sm text-slate-500 max-w-sm mb-8 leading-relaxed">
-              Bienvenue Christiane. Je suis votre Coach personnel pour le Barreau 2026. 
-              Cliquez ci-dessous pour commencer notre session.
+              Bonjour Christiane. Choisissez une matière ou un sujet dans le menu pour commencer ou reprendre vos révisions. Vous pouvez également me poser directement une question.
             </p>
             <button 
               onClick={startSession}
@@ -929,13 +1207,19 @@ export default function App() {
             >
               {isListening ? <MicOff size={18} /> : <Mic size={18} />}
             </button>
-            <input
-              type="text"
+            <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
               placeholder={isListening ? "Écoute..." : "Répondez..."}
+              rows={1}
               className={cn(
-                "flex-1 bg-slate-50 border border-slate-200 rounded-xl sm:rounded-2xl px-3 sm:px-6 py-2.5 sm:py-3.5 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all text-sm sm:text-base",
+                "flex-1 bg-slate-50 border border-slate-200 rounded-xl sm:rounded-2xl px-3 sm:px-6 py-2.5 sm:py-3.5 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all text-sm sm:text-base resize-none min-h-[44px] max-h-[200px] overflow-y-auto",
                 isListening && "placeholder:text-red-400"
               )}
             />

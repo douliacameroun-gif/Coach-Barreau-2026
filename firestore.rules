@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == "douliacameroun@gmail.com" && request.auth.token.email_verified == true
+      );
+    }
+
+    // User Profile Rules
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId);
+      allow update: if isAdmin() || (isOwner(userId) && 
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoURL', 'deviceId']));
+    }
+
+    // Device Binding Rules
+    match /devices/{deviceId} {
+      // Anyone can check if a device is claimed
+      allow read: if isAuthenticated();
+      // Only the first user can claim a device
+      allow create: if isAuthenticated() && !exists(/databases/$(database)/documents/devices/$(deviceId));
+      // No one can change a device claim once made
+      allow update: if false;
+    }
+  }
+}
