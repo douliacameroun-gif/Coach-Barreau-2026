@@ -47,8 +47,6 @@ import {
   User as FirebaseUser
 } from './firebase';
 
-console.log("App.tsx: Module loading...");
-
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -98,6 +96,7 @@ Tu ne dois commencer le développement approfondi qu'UNE FOIS que Christiane a f
 Commence par saluer Christiane chaleureusement et invite-la à choisir une matière dans le panneau latéral.`;
 
 interface Message {
+  id: string;
   role: 'user' | 'model';
   content: string;
   timestamp: Date;
@@ -275,7 +274,6 @@ export default function App() {
 
   // Initialize Gemini
   const ai = useMemo(() => {
-    console.log("App.tsx: Initializing Gemini AI...");
     const key = process.env.GEMINI_API_KEY || '';
     return new GoogleGenAI({ apiKey: key });
   }, []);
@@ -298,29 +296,22 @@ export default function App() {
 
   // Auth Listener
   useEffect(() => {
-    console.log("App.tsx: Auth listener starting...");
     if (!auth || !db) {
-      console.error("App.tsx: Firebase Auth or Firestore not initialized.");
+      console.error("Firebase Auth or Firestore not initialized.");
       setIsAuthLoading(false);
       return;
     }
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      console.log("App.tsx: Auth state changed:", firebaseUser?.uid || "null");
-      
       if (firebaseUser) {
         setUser(firebaseUser);
         try {
           const deviceId = getDeviceId();
-          console.log("App.tsx: Device ID:", deviceId);
           
           // Check Device Binding
           const deviceDocRef = doc(db, 'devices', deviceId);
-          console.log("App.tsx: Fetching device doc...");
           const deviceDoc = await getDoc(deviceDocRef);
-          console.log("App.tsx: Device doc fetched, exists:", deviceDoc.exists());
           
           if (deviceDoc.exists() && deviceDoc.data().uid !== firebaseUser.uid && firebaseUser.email !== 'douliacameroun@gmail.com') {
-            console.warn("App.tsx: Device blocked!");
             setIsDeviceBlocked(true);
             setIsAuthLoading(false);
             return;
@@ -328,12 +319,9 @@ export default function App() {
 
           // Sync Profile
           const userDocRef = doc(db, 'users', firebaseUser.uid);
-          console.log("App.tsx: Fetching user doc...");
           const userDoc = await getDoc(userDocRef);
-          console.log("App.tsx: User doc fetched, exists:", userDoc.exists());
           
           if (!userDoc.exists()) {
-            console.log("App.tsx: Creating new profile...");
             const newProfile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || '',
@@ -353,7 +341,6 @@ export default function App() {
             
             setUserProfile(newProfile);
           } else {
-            console.log("App.tsx: Profile already exists, loading...");
             const data = userDoc.data() as UserProfile;
             // If user doesn't have a deviceId yet, bind it
             if (!data.deviceId) {
@@ -365,14 +352,12 @@ export default function App() {
             setUserProfile({ ...data, isPremium: data.isPremium || firebaseUser.email === 'douliacameroun@gmail.com' });
           }
         } catch (error) {
-          console.error("App.tsx: Error syncing profile:", error);
+          console.error("Error syncing profile:", error);
         }
       } else {
-        console.log("App.tsx: No user authenticated.");
         setUser(null);
         setUserProfile(null);
       }
-      console.log("App.tsx: Setting isAuthLoading to false.");
       setIsAuthLoading(false);
     });
     return () => unsubscribe();
@@ -513,6 +498,7 @@ export default function App() {
       
       const { cleanContent, synthesis } = extractSynthesis(text);
       const newMessage: Message = { 
+        id: Math.random().toString(36).substring(2, 15),
         role: 'model', 
         content: cleanContent, 
         timestamp: new Date(),
@@ -668,7 +654,12 @@ export default function App() {
   const handleSendFromVoice = async (text: string) => {
     if (!text.trim() || isTyping || !activeSessionId) return;
     
-    const userMessage: Message = { role: 'user', content: text, timestamp: new Date() };
+    const userMessage: Message = { 
+      id: Math.random().toString(36).substring(2, 15),
+      role: 'user', 
+      content: text, 
+      timestamp: new Date() 
+    };
     const updatedMessages = [...messages, userMessage];
     updateActiveSession(updatedMessages);
     
@@ -681,6 +672,7 @@ export default function App() {
       
       const { cleanContent, synthesis } = extractSynthesis(responseText);
       const modelMessage: Message = { 
+        id: Math.random().toString(36).substring(2, 15),
         role: 'model', 
         content: cleanContent, 
         timestamp: new Date(),
@@ -703,6 +695,7 @@ export default function App() {
     if (((!input.trim() && !selectedFile) || isTyping) || !activeSessionId) return;
 
     const userMessage: Message = { 
+      id: Math.random().toString(36).substring(2, 15),
       role: 'user', 
       content: input, 
       timestamp: new Date(),
@@ -742,6 +735,7 @@ export default function App() {
       const text = response.text;
       const { cleanContent, synthesis } = extractSynthesis(text);
       const modelMessage: Message = { 
+        id: Math.random().toString(36).substring(2, 15),
         role: 'model', 
         content: cleanContent, 
         timestamp: new Date(),
@@ -755,6 +749,7 @@ export default function App() {
     } catch (error) {
       console.error("Chat Error:", error);
       const errorMessage: Message = { 
+        id: Math.random().toString(36).substring(2, 15),
         role: 'model', 
         content: "Désolé Christiane, j'ai rencontré une petite difficulté technique lors de l'analyse. Peux-tu réessayer ?", 
         timestamp: new Date() 
@@ -876,7 +871,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-[100dvh] bg-[#f8f9fa] overflow-hidden safe-top safe-bottom">
+    <div className="flex h-[100dvh] bg-[#f8f9fa] overflow-hidden safe-top safe-bottom" translate="no">
       {/* Sidebar - Right Block for Subjects and Info */}
       <aside className={cn(
         "fixed inset-y-0 right-0 z-40 w-[300px] sm:w-[380px] bg-slate-900 text-white flex flex-col border-l border-slate-800 transition-transform duration-300 lg:relative lg:translate-x-0 order-2",
@@ -1146,9 +1141,9 @@ export default function App() {
               <p className="text-sm text-slate-400 max-w-[200px]">Sélectionnez un sujet dans le menu pour commencer ou reprendre vos révisions.</p>
             </div>
           )}
-          {messages.map((msg, i) => (
+          {messages.map((msg) => (
             <div 
-              key={i} 
+              key={msg.id} 
               className={cn(
                 "flex w-full animate-in fade-in slide-in-from-bottom-4 duration-500",
                 msg.role === 'user' ? "justify-end" : "justify-start"
@@ -1223,7 +1218,7 @@ export default function App() {
           ))}
           
           {isTyping && (
-            <div className="flex justify-start animate-in fade-in duration-300">
+            <div key="typing-indicator" className="flex justify-start animate-in fade-in duration-300">
               <div className="flex gap-3 sm:gap-6">
                 <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
                   <Loader2 className="text-white w-5 h-5 sm:w-6 sm:h-6 animate-spin" />

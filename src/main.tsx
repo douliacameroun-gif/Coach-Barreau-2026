@@ -30,7 +30,6 @@ class ErrorBoundary extends Component<{children: ReactNode}, {hasError: boolean,
   }
 }
 
-console.log("main.tsx: Starting application...");
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
