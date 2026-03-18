@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI, Modality, GenerateContentResponse } from "@google/genai";
 import { 
   Send, 
@@ -21,31 +21,13 @@ import {
   File,
   Menu,
   Trash2,
-  Download,
-  Lock,
-  LogOut,
-  CreditCard,
-  CheckCircle2,
-  AlertCircle
+  Download
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { 
-  auth, 
-  db, 
-  loginWithGoogle, 
-  logout, 
-  onAuthStateChanged, 
-  doc, 
-  getDoc, 
-  setDoc, 
-  serverTimestamp, 
-  onSnapshot,
-  User as FirebaseUser
-} from './firebase';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -96,7 +78,6 @@ Tu ne dois commencer le développement approfondi qu'UNE FOIS que Christiane a f
 Commence par saluer Christiane chaleureusement et invite-la à choisir une matière dans le panneau latéral.`;
 
 interface Message {
-  id: string;
   role: 'user' | 'model';
   content: string;
   timestamp: Date;
@@ -116,141 +97,28 @@ interface Session {
   timestamp: Date;
 }
 
-interface UserProfile {
-  uid: string;
-  email: string;
-  displayName: string;
-  photoURL: string;
-  firstLoginAt: any;
-  isPremium: boolean;
-  createdAt: any;
-  deviceId?: string;
-}
-
-// --- Auth Components ---
-
-function Login({ onLogin }: { onLogin: () => void }) {
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const handleLoginClick = async () => {
-    setError(null);
-    setLoading(true);
-    try {
-      await onLogin();
-    } catch (err: any) {
-      console.error("Login component error:", err);
-      setError(err.message || "Une erreur est survenue lors de la connexion.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="h-screen flex flex-col items-center justify-center bg-slate-900 p-6 text-center">
-      <div className="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center shadow-2xl shadow-indigo-500/20 mb-8 animate-in fade-in zoom-in duration-700">
-        <Scale className="text-white w-10 h-10" />
-      </div>
-      <h1 className="text-3xl font-bold text-white mb-3 tracking-tight">Coach Barreau 2026</h1>
-      <p className="text-slate-400 max-w-xs mb-10 leading-relaxed">
-        Votre compagnon d'étude intelligent pour réussir l'examen du barreau au Cameroun.
-      </p>
-      
-      {error && (
-        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-400 text-sm max-w-xs">
-          {error}
-        </div>
-      )}
-
-      <button
-        onClick={handleLoginClick}
-        disabled={loading}
-        className="flex items-center gap-3 bg-white text-slate-900 px-8 py-4 rounded-2xl font-bold text-lg hover:bg-slate-100 transition-all shadow-xl active:scale-95 group disabled:opacity-50"
-      >
-        {loading ? (
-          <Loader2 className="w-5 h-5 animate-spin" />
-        ) : (
-          <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
-        )}
-        {loading ? "Connexion..." : "Se connecter avec Google"}
-      </button>
-      
-      <p className="mt-4 text-[10px] text-slate-500 max-w-xs leading-relaxed">
-        Si rien ne se passe, assurez-vous que votre navigateur autorise les fenêtres surgissantes (popups).
-      </p>
-
-      <p className="mt-8 text-[10px] text-slate-500 uppercase tracking-widest font-bold">
-        Accès réservé aux candidats
-      </p>
-    </div>
-  );
-}
-
-function TrialExpired({ onLogout }: { onLogout: () => void }) {
-  return (
-    <div className="h-screen flex flex-col items-center justify-center bg-slate-900 p-8 text-center">
-      <div className="w-20 h-20 bg-red-500/10 rounded-3xl flex items-center justify-center mb-8 border border-red-500/20">
-        <Lock className="text-red-500 w-10 h-10" />
-      </div>
-      <h1 className="text-2xl font-bold text-white mb-4">Période d'essai terminée</h1>
-      <div className="bg-slate-800/50 rounded-2xl p-6 border border-slate-700/50 max-w-sm mb-8">
-        <p className="text-slate-300 text-sm leading-relaxed mb-6">
-          Votre essai gratuit de 24 heures a expiré. Pour continuer à utiliser le Coach Barreau et accéder à toutes les matières, veuillez activer votre accès premium.
-        </p>
-        <div className="text-left space-y-4">
-          <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">Instructions de paiement</p>
-          <div className="space-y-2">
-            <p className="text-xs text-slate-400">❶ Envoyez votre paiement via Orange Money ou MTN Mobile Money.</p>
-            <p className="text-xs text-slate-400">❷ Contactez Christiane Endalle avec votre preuve de paiement.</p>
-            <p className="text-xs text-slate-400">❸ Votre compte sera activé instantanément.</p>
-          </div>
-        </div>
-      </div>
-      <button
-        onClick={onLogout}
-        className="text-slate-400 hover:text-white text-sm font-medium flex items-center gap-2 transition-colors"
-      >
-        <LogOut size={16} /> Se déconnecter
-      </button>
-    </div>
-  );
-}
-
-function DeviceBlocked({ onLogout }: { onLogout: () => void }) {
-  return (
-    <div className="h-screen flex flex-col items-center justify-center bg-slate-900 p-8 text-center">
-      <div className="w-20 h-20 bg-amber-500/10 rounded-3xl flex items-center justify-center mb-8 border border-amber-500/20">
-        <ShieldAlert className="text-amber-500 w-10 h-10" />
-      </div>
-      <h1 className="text-2xl font-bold text-white mb-4">Terminal déjà lié</h1>
-      <div className="bg-slate-800/50 rounded-2xl p-6 border border-slate-700/50 max-w-sm mb-8">
-        <p className="text-slate-300 text-sm leading-relaxed">
-          Ce téléphone ou ordinateur est déjà lié à un autre compte Google. 
-          Pour des raisons de sécurité et pour éviter les abus, un seul compte est autorisé par terminal.
-        </p>
-        <p className="mt-4 text-xs text-slate-400 italic">
-          Veuillez vous connecter avec votre compte principal ou contacter Christiane en cas d'erreur.
-        </p>
-      </div>
-      <button
-        onClick={onLogout}
-        className="text-slate-400 hover:text-white text-sm font-medium flex items-center gap-2 transition-colors"
-      >
-        <LogOut size={16} /> Se déconnecter
-      </button>
-    </div>
-  );
-}
-
-// --- Main App ---
+// --- Components ---
 
 export default function App() {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [trialRemaining, setTrialRemaining] = useState<number | null>(null);
-  const [isDeviceBlocked, setIsDeviceBlocked] = useState(false);
+  const [sessions, setSessions] = useState<Session[]>(() => {
+    const saved = localStorage.getItem('coach_barreau_sessions');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return parsed.map((s: any) => ({
+          ...s,
+          timestamp: new Date(s.timestamp),
+          messages: s.messages.map((m: any) => ({
+            ...m,
+            timestamp: new Date(m.timestamp)
+          }))
+        }));
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
+  });
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeSubject, setActiveSubject] = useState<string | null>(null);
@@ -273,148 +141,13 @@ export default function App() {
   const messages = activeSession?.messages || [];
 
   // Initialize Gemini
-  const ai = useMemo(() => {
-    const key = process.env.GEMINI_API_KEY || '';
-    return new GoogleGenAI({ apiKey: key });
-  }, []);
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
   const chatRef = useRef<any>(null);
-
-  // Get or Create Device ID
-  const getDeviceId = () => {
-    try {
-      let id = localStorage.getItem('coach_barreau_device_id');
-      if (!id) {
-        id = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-        localStorage.setItem('coach_barreau_device_id', id);
-      }
-      return id;
-    } catch (e) {
-      console.warn("localStorage not available:", e);
-      return 'default_device';
-    }
-  };
-
-  // Auth Listener
-  useEffect(() => {
-    if (!auth || !db) {
-      console.error("Firebase Auth or Firestore not initialized.");
-      setIsAuthLoading(false);
-      return;
-    }
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        setUser(firebaseUser);
-        try {
-          const deviceId = getDeviceId();
-          
-          // Check Device Binding
-          const deviceDocRef = doc(db, 'devices', deviceId);
-          const deviceDoc = await getDoc(deviceDocRef);
-          
-          if (deviceDoc.exists() && deviceDoc.data().uid !== firebaseUser.uid && firebaseUser.email !== 'douliacameroun@gmail.com') {
-            setIsDeviceBlocked(true);
-            setIsAuthLoading(false);
-            return;
-          }
-
-          // Sync Profile
-          const userDocRef = doc(db, 'users', firebaseUser.uid);
-          const userDoc = await getDoc(userDocRef);
-          
-          if (!userDoc.exists()) {
-            const newProfile: UserProfile = {
-              uid: firebaseUser.uid,
-              email: firebaseUser.email || '',
-              displayName: firebaseUser.displayName || 'Étudiant',
-              photoURL: firebaseUser.photoURL || '',
-              firstLoginAt: new Date().toISOString(),
-              isPremium: firebaseUser.email === 'douliacameroun@gmail.com',
-              createdAt: serverTimestamp(),
-              deviceId: deviceId
-            };
-            await setDoc(userDocRef, newProfile);
-            
-            // Claim Device
-            if (!deviceDoc.exists()) {
-              await setDoc(deviceDocRef, { uid: firebaseUser.uid, claimedAt: serverTimestamp() });
-            }
-            
-            setUserProfile(newProfile);
-          } else {
-            const data = userDoc.data() as UserProfile;
-            // If user doesn't have a deviceId yet, bind it
-            if (!data.deviceId) {
-              await setDoc(userDocRef, { deviceId: deviceId }, { merge: true });
-              if (!deviceDoc.exists()) {
-                await setDoc(deviceDocRef, { uid: firebaseUser.uid, claimedAt: serverTimestamp() });
-              }
-            }
-            setUserProfile({ ...data, isPremium: data.isPremium || firebaseUser.email === 'douliacameroun@gmail.com' });
-          }
-        } catch (error) {
-          console.error("Error syncing profile:", error);
-        }
-      } else {
-        setUser(null);
-        setUserProfile(null);
-      }
-      setIsAuthLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // Trial Timer Logic
-  useEffect(() => {
-    if (userProfile && !userProfile.isPremium) {
-      const timer = setInterval(() => {
-        const firstLogin = new Date(userProfile.firstLoginAt).getTime();
-        const now = new Date().getTime();
-        const diff = now - firstLogin;
-        const twentyFourHours = 24 * 60 * 60 * 1000;
-        const remaining = Math.max(0, twentyFourHours - diff);
-        setTrialRemaining(remaining);
-      }, 1000);
-      return () => clearInterval(timer);
-    } else {
-      setTrialRemaining(null);
-    }
-  }, [userProfile]);
 
   // Save sessions to localStorage whenever they change
   useEffect(() => {
-    if (user) {
-      localStorage.setItem(`coach_barreau_sessions_${user.uid}`, JSON.stringify(sessions));
-    }
-  }, [sessions, user]);
-
-  // Load user specific sessions
-  useEffect(() => {
-    if (user) {
-      const saved = localStorage.getItem(`coach_barreau_sessions_${user.uid}`);
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed)) {
-            setSessions(parsed.map((s: any) => ({
-              ...s,
-              timestamp: new Date(s.timestamp),
-              messages: Array.isArray(s.messages) ? s.messages.map((m: any) => ({
-                ...m,
-                timestamp: new Date(m.timestamp)
-              })) : []
-            })));
-          } else {
-            setSessions([]);
-          }
-        } catch (e) {
-          console.error("Error loading sessions:", e);
-          setSessions([]);
-        }
-      } else {
-        setSessions([]);
-      }
-    }
-  }, [user]);
+    localStorage.setItem('coach_barreau_sessions', JSON.stringify(sessions));
+  }, [sessions]);
 
   // Load chat session when activeSessionId changes
   useEffect(() => {
@@ -488,17 +221,15 @@ export default function App() {
     if (messages.length > 0) return;
     setIsTyping(true);
     try {
-      const userName = userProfile?.displayName?.split(' ')[0] || 'Christiane';
       const prompt = subject 
-        ? `Bonjour Coach, je suis ${userName}. Je souhaite réviser la matière suivante : ${subject}. Propose-moi des sujets, questions ou cas pratiques à traiter.`
-        : `Bonjour Coach, je suis ${userName}. Je suis prête pour ma session de révision.`;
+        ? `Bonjour Coach, je souhaite réviser la matière suivante : ${subject}. Propose-moi des sujets, questions ou cas pratiques à traiter.`
+        : "Bonjour Coach, je suis prête pour ma session de révision.";
         
       const response = await chatRef.current.sendMessage({ message: prompt });
       const text = response.text;
       
       const { cleanContent, synthesis } = extractSynthesis(text);
       const newMessage: Message = { 
-        id: Math.random().toString(36).substring(2, 15),
         role: 'model', 
         content: cleanContent, 
         timestamp: new Date(),
@@ -654,12 +385,7 @@ export default function App() {
   const handleSendFromVoice = async (text: string) => {
     if (!text.trim() || isTyping || !activeSessionId) return;
     
-    const userMessage: Message = { 
-      id: Math.random().toString(36).substring(2, 15),
-      role: 'user', 
-      content: text, 
-      timestamp: new Date() 
-    };
+    const userMessage: Message = { role: 'user', content: text, timestamp: new Date() };
     const updatedMessages = [...messages, userMessage];
     updateActiveSession(updatedMessages);
     
@@ -672,7 +398,6 @@ export default function App() {
       
       const { cleanContent, synthesis } = extractSynthesis(responseText);
       const modelMessage: Message = { 
-        id: Math.random().toString(36).substring(2, 15),
         role: 'model', 
         content: cleanContent, 
         timestamp: new Date(),
@@ -695,7 +420,6 @@ export default function App() {
     if (((!input.trim() && !selectedFile) || isTyping) || !activeSessionId) return;
 
     const userMessage: Message = { 
-      id: Math.random().toString(36).substring(2, 15),
       role: 'user', 
       content: input, 
       timestamp: new Date(),
@@ -735,7 +459,6 @@ export default function App() {
       const text = response.text;
       const { cleanContent, synthesis } = extractSynthesis(text);
       const modelMessage: Message = { 
-        id: Math.random().toString(36).substring(2, 15),
         role: 'model', 
         content: cleanContent, 
         timestamp: new Date(),
@@ -749,7 +472,6 @@ export default function App() {
     } catch (error) {
       console.error("Chat Error:", error);
       const errorMessage: Message = { 
-        id: Math.random().toString(36).substring(2, 15),
         role: 'model', 
         content: "Désolé Christiane, j'ai rencontré une petite difficulté technique lors de l'analyse. Peux-tu réessayer ?", 
         timestamp: new Date() 
@@ -832,46 +554,8 @@ export default function App() {
     }
   };
 
-  const handleLogin = async () => {
-    try {
-      if (!auth) {
-        throw new Error("Le service d'authentification n'est pas prêt.");
-      }
-      console.log("Starting Google Login...");
-      await loginWithGoogle();
-      console.log("Google Login successful!");
-    } catch (error: any) {
-      console.error("Google Login failed:", error);
-      // Re-throw to be caught by Login component
-      throw error;
-    }
-  };
-
-  if (isAuthLoading) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center bg-slate-900 text-white">
-        <Scale className="text-indigo-500 w-12 h-12 animate-pulse mb-4" />
-        <p className="text-slate-400 font-medium animate-pulse">Chargement du Coach Barreau...</p>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <Login onLogin={handleLogin} />;
-  }
-
-  if (isDeviceBlocked) {
-    return <DeviceBlocked onLogout={logout} />;
-  }
-
-  const isTrialExpired = !userProfile?.isPremium && trialRemaining !== null && trialRemaining <= 0;
-
-  if (isTrialExpired) {
-    return <TrialExpired onLogout={logout} />;
-  }
-
   return (
-    <div className="flex h-[100dvh] bg-[#f8f9fa] overflow-hidden safe-top safe-bottom" translate="no">
+    <div className="flex h-[100dvh] bg-[#f8f9fa] overflow-hidden safe-top safe-bottom">
       {/* Sidebar - Right Block for Subjects and Info */}
       <aside className={cn(
         "fixed inset-y-0 right-0 z-40 w-[300px] sm:w-[380px] bg-slate-900 text-white flex flex-col border-l border-slate-800 transition-transform duration-300 lg:relative lg:translate-x-0 order-2",
@@ -896,44 +580,10 @@ export default function App() {
         </div>
 
         <div className="p-4 border-b border-slate-800">
-          <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full overflow-hidden border border-slate-700">
-              <img 
-                src={user?.photoURL || "https://i.postimg.cc/cJQfnr2V/Whats-App-Image-2025-09-10-at-11-07-09-(1).jpg"} 
-                alt="Profile" 
-                className="w-full h-full object-cover"
-                referrerPolicy="no-referrer"
-              />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Utilisateur</p>
-              <p className="text-sm font-semibold text-white truncate">{user?.displayName || "Christiane Endalle"}</p>
-            </div>
+          <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
+            <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Candidate</p>
+            <p className="text-sm font-semibold text-white">Christiane Endalle</p>
           </div>
-          
-          {!userProfile?.isPremium && trialRemaining !== null && (
-            <div className="mt-3 bg-indigo-600/10 rounded-xl p-3 border border-indigo-500/20">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">Essai Gratuit</span>
-                <span className="text-[10px] font-mono font-bold text-indigo-300">
-                  {Math.floor(trialRemaining / 3600)}h {Math.floor((trialRemaining % 3600) / 60)}m {trialRemaining % 60}s
-                </span>
-              </div>
-              <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-indigo-500 transition-all duration-1000"
-                  style={{ width: `${(trialRemaining / (24 * 3600)) * 100}%` }}
-                />
-              </div>
-            </div>
-          )}
-          
-          {userProfile?.isPremium && (
-            <div className="mt-3 bg-emerald-500/10 rounded-xl p-3 border border-emerald-500/20 flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">Accès Premium Activé</span>
-            </div>
-          )}
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
@@ -1058,26 +708,28 @@ export default function App() {
           </section>
         </div>
 
-        <div className="p-6 border-t border-slate-800 bg-slate-900/50 flex items-center justify-between">
-          <button 
-            onClick={() => setIsTtsEnabled(!isTtsEnabled)}
-            className={cn(
-              "flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all border font-bold text-xs uppercase tracking-wider",
-              isTtsEnabled 
-                ? "bg-indigo-600/10 border-indigo-600/20 text-indigo-400" 
-                : "bg-slate-800 border-slate-700 text-slate-500"
-            )}
-          >
-            {isTtsEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
-            <span className="hidden sm:inline">{isTtsEnabled ? "Voix Active" : "Voix Muette"}</span>
-          </button>
-          <button 
-            onClick={logout}
-            className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-400 hover:text-white transition-colors"
-            title="Se déconnecter"
-          >
-            <LogOut size={18} />
-          </button>
+        <div className="p-6 border-t border-slate-800 bg-slate-900/50">
+          <div className="flex items-center justify-between">
+            <button 
+              onClick={() => setIsTtsEnabled(!isTtsEnabled)}
+              className={cn(
+                "flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all border font-bold text-xs uppercase tracking-wider",
+                isTtsEnabled 
+                  ? "bg-indigo-600/10 border-indigo-600/20 text-indigo-400" 
+                  : "bg-slate-800 border-slate-700 text-slate-500"
+              )}
+            >
+              {isTtsEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+              <span className="hidden sm:inline">{isTtsEnabled ? "Voix Active" : "Voix Muette"}</span>
+            </button>
+            <button 
+              onClick={() => window.location.reload()}
+              className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-400 hover:text-white transition-colors"
+              title="Nouvelle session"
+            >
+              <RefreshCw size={18} />
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -1132,111 +784,105 @@ export default function App() {
         {/* Chat Area */}
         <div 
           ref={scrollRef}
-          className="flex-1 overflow-y-auto p-4 sm:p-10 scroll-smooth notranslate"
-          translate="no"
+          className="flex-1 overflow-y-auto p-4 sm:p-10 space-y-6 sm:space-y-10 scroll-smooth"
         >
-          <div className="flex flex-col gap-6 sm:gap-10 min-h-full">
-            {messages.length === 0 && !isTyping ? (
-              <div key="empty-state" className="flex-1 flex flex-col items-center justify-center text-center p-8 opacity-60">
-                <BookOpen size={48} className="text-indigo-200 mb-4" />
-                <h3 className="text-lg font-bold text-slate-400">Choisissez une matière</h3>
-                <p className="text-sm text-slate-400 max-w-[200px]">Sélectionnez un sujet dans le menu pour commencer ou reprendre vos révisions.</p>
-              </div>
-            ) : (
-              <>
-                {messages.map((msg) => (
-                  <div 
-                    key={msg.id} 
-                    className={cn(
-                      "flex w-full animate-in fade-in slide-in-from-bottom-4 duration-500",
-                      msg.role === 'user' ? "justify-end" : "justify-start"
-                    )}
-                  >
-                    <div className={cn(
-                      "flex gap-3 sm:gap-4 max-w-[90%] sm:max-w-[85%]",
-                      msg.role === 'user' ? "flex-row-reverse" : "flex-row"
-                    )}>
-                      <div className={cn(
-                        "w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center shadow-sm mt-0.5 overflow-hidden border border-slate-200",
-                        msg.role === 'user' ? "bg-slate-100" : "bg-indigo-600 shadow-lg shadow-indigo-500/20"
-                      )}>
-                        {msg.role === 'user' ? (
-                          <img 
-                            src="https://i.postimg.cc/cJQfnr2V/Whats-App-Image-2025-09-10-at-11-07-09-(1).jpg" 
-                            alt="Christiane" 
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : (
-                          <Scale className="text-white w-5 h-5" />
-                        )}
-                      </div>
-                      
-                      <div className={cn(
-                        "flex flex-col gap-2",
-                        msg.role === 'user' ? "items-end" : "items-start"
-                      )}>
-                        {msg.attachment && (
-                          <div className="flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-600 text-xs font-bold shadow-sm">
-                            <File size={14} className="text-indigo-600" />
-                            <span>{msg.attachment.name}</span>
-                          </div>
-                        )}
-                        <div className={cn(
-                          "p-3.5 rounded-2xl shadow-sm border leading-relaxed",
-                          msg.role === 'user' 
-                            ? "bg-white border-slate-200 text-slate-800 rounded-tr-none" 
-                            : "bg-indigo-50/50 border-indigo-100 text-slate-900 rounded-tl-none"
-                        )}>
-                          <div className="markdown-body prose prose-slate max-w-none prose-p:leading-relaxed prose-strong:text-indigo-900 prose-p:my-1 prose-ul:my-1 prose-li:my-0.5" translate="no">
-                            <Markdown key={`md-${msg.id}`}>
-                              {msg.content}
-                            </Markdown>
-                          </div>
-
-                          {msg.synthesis && (
-                            <div className="mt-4 pt-4 border-t border-indigo-100">
-                              <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                <FileText size={12} /> Synthèse disponible
-                              </p>
-                              <button
-                                onClick={() => generatePDF(msg.synthesis!)}
-                                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200"
-                              >
-                                <Download size={14} /> Télécharger le Corrigé (PDF)
-                              </button>
-                            </div>
-                          )}
-
-                          <div className={cn(
-                            "text-[10px] mt-4 font-bold opacity-30 uppercase tracking-[0.15em]",
-                            msg.role === 'user' ? "text-right" : "text-left"
-                          )}>
-                            {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+          {messages.length === 0 && !isTyping && (
+            <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-60">
+              <BookOpen size={48} className="text-indigo-200 mb-4" />
+              <h3 className="text-lg font-bold text-slate-400">Choisissez une matière</h3>
+              <p className="text-sm text-slate-400 max-w-[200px]">Sélectionnez un sujet dans le menu pour commencer ou reprendre vos révisions.</p>
+            </div>
+          )}
+          {messages.map((msg, i) => (
+            <div 
+              key={i} 
+              className={cn(
+                "flex w-full animate-in fade-in slide-in-from-bottom-4 duration-500",
+                msg.role === 'user' ? "justify-end" : "justify-start"
+              )}
+            >
+              <div className={cn(
+                "flex gap-3 sm:gap-4 max-w-[90%] sm:max-w-[85%]",
+                msg.role === 'user' ? "flex-row-reverse" : "flex-row"
+              )}>
+                <div className={cn(
+                  "w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center shadow-sm mt-0.5 overflow-hidden border border-slate-200",
+                  msg.role === 'user' ? "bg-slate-100" : "bg-indigo-600 shadow-lg shadow-indigo-500/20"
+                )}>
+                  {msg.role === 'user' ? (
+                    <img 
+                      src="https://i.postimg.cc/cJQfnr2V/Whats-App-Image-2025-09-10-at-11-07-09-(1).jpg" 
+                      alt="Christiane" 
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <Scale className="text-white w-5 h-5" />
+                  )}
+                </div>
                 
-                {isTyping && (
-                  <div key="typing-indicator" className="flex justify-start animate-in fade-in duration-300">
-                    <div className="flex gap-3 sm:gap-6">
-                      <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                        <Loader2 className="text-white w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
+                <div className={cn(
+                  "flex flex-col gap-2",
+                  msg.role === 'user' ? "items-end" : "items-start"
+                )}>
+                  {msg.attachment && (
+                    <div className="flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-600 text-xs font-bold shadow-sm">
+                      <File size={14} className="text-indigo-600" />
+                      <span>{msg.attachment.name}</span>
+                    </div>
+                  )}
+                  <div className={cn(
+                    "p-3.5 rounded-2xl shadow-sm border leading-relaxed",
+                    msg.role === 'user' 
+                      ? "bg-white border-slate-200 text-slate-800 rounded-tr-none" 
+                      : "bg-indigo-50/50 border-indigo-100 text-slate-900 rounded-tl-none"
+                  )}>
+                    <div className="markdown-body prose prose-slate max-w-none prose-p:leading-relaxed prose-strong:text-indigo-900 prose-p:my-1 prose-ul:my-1 prose-li:my-0.5">
+                      <Markdown>
+                        {msg.content}
+                      </Markdown>
+                    </div>
+
+                    {msg.synthesis && (
+                      <div className="mt-4 pt-4 border-t border-indigo-100">
+                        <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                          <FileText size={12} /> Synthèse disponible
+                        </p>
+                        <button
+                          onClick={() => generatePDF(msg.synthesis!)}
+                          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200"
+                        >
+                          <Download size={14} /> Télécharger le Corrigé (PDF)
+                        </button>
                       </div>
-                      <div className="bg-indigo-50/50 border border-indigo-100 p-3 sm:p-5 rounded-2xl sm:rounded-[2rem] rounded-tl-none flex items-center gap-2">
-                        <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
-                        <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
-                        <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"></span>
-                      </div>
+                    )}
+
+                    <div className={cn(
+                      "text-[10px] mt-4 font-bold opacity-30 uppercase tracking-[0.15em]",
+                      msg.role === 'user' ? "text-right" : "text-left"
+                    )}>
+                      {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </div>
-                )}
-              </>
-            )}
-          </div>
+                </div>
+              </div>
+            </div>
+          ))}
+          
+          {isTyping && (
+            <div className="flex justify-start animate-in fade-in duration-300">
+              <div className="flex gap-3 sm:gap-6">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                  <Loader2 className="text-white w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
+                </div>
+                <div className="bg-indigo-50/50 border border-indigo-100 p-3 sm:p-5 rounded-2xl sm:rounded-[2rem] rounded-tl-none flex items-center gap-2">
+                  <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                  <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                  <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"></span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Input Area */}
