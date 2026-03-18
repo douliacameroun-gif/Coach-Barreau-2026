@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { GoogleGenAI, Modality, GenerateContentResponse } from "@google/genai";
 import { 
   Send, 
@@ -272,7 +272,10 @@ export default function App() {
   const messages = activeSession?.messages || [];
 
   // Initialize Gemini
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+  const ai = useMemo(() => {
+    const key = typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined;
+    return new GoogleGenAI({ apiKey: key || '' });
+  }, []);
   const chatRef = useRef<any>(null);
 
   // Get or Create Device ID
@@ -288,57 +291,61 @@ export default function App() {
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setIsAuthLoading(true);
-      setIsDeviceBlocked(false);
+      // Don't set loading to true here if we're already logged in or out
+      // Only set it if it's the initial check
       
       if (firebaseUser) {
         setUser(firebaseUser);
-        const deviceId = getDeviceId();
-        
-        // Check Device Binding
-        const deviceDocRef = doc(db, 'devices', deviceId);
-        const deviceDoc = await getDoc(deviceDocRef);
-        
-        if (deviceDoc.exists() && deviceDoc.data().uid !== firebaseUser.uid && firebaseUser.email !== 'douliacameroun@gmail.com') {
-          // Device is already claimed by someone else
-          setIsDeviceBlocked(true);
-          setIsAuthLoading(false);
-          return;
-        }
-
-        // Sync Profile
-        const userDocRef = doc(db, 'users', firebaseUser.uid);
-        const userDoc = await getDoc(userDocRef);
-        
-        if (!userDoc.exists()) {
-          const newProfile: UserProfile = {
-            uid: firebaseUser.uid,
-            email: firebaseUser.email || '',
-            displayName: firebaseUser.displayName || 'Étudiant',
-            photoURL: firebaseUser.photoURL || '',
-            firstLoginAt: new Date().toISOString(),
-            isPremium: firebaseUser.email === 'douliacameroun@gmail.com', // Christiane is always premium
-            createdAt: serverTimestamp(),
-            deviceId: deviceId
-          };
-          await setDoc(userDocRef, newProfile);
+        try {
+          const deviceId = getDeviceId();
           
-          // Claim Device
-          if (!deviceDoc.exists()) {
-            await setDoc(deviceDocRef, { uid: firebaseUser.uid, claimedAt: serverTimestamp() });
+          // Check Device Binding
+          const deviceDocRef = doc(db, 'devices', deviceId);
+          const deviceDoc = await getDoc(deviceDocRef);
+          
+          if (deviceDoc.exists() && deviceDoc.data().uid !== firebaseUser.uid && firebaseUser.email !== 'douliacameroun@gmail.com') {
+            // Device is already claimed by someone else
+            setIsDeviceBlocked(true);
+            setIsAuthLoading(false);
+            return;
           }
+
+          // Sync Profile
+          const userDocRef = doc(db, 'users', firebaseUser.uid);
+          const userDoc = await getDoc(userDocRef);
           
-          setUserProfile(newProfile);
-        } else {
-          const data = userDoc.data() as UserProfile;
-          // If user doesn't have a deviceId yet, bind it
-          if (!data.deviceId) {
-            await setDoc(userDocRef, { deviceId: deviceId }, { merge: true });
+          if (!userDoc.exists()) {
+            const newProfile: UserProfile = {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email || '',
+              displayName: firebaseUser.displayName || 'Étudiant',
+              photoURL: firebaseUser.photoURL || '',
+              firstLoginAt: new Date().toISOString(),
+              isPremium: firebaseUser.email === 'douliacameroun@gmail.com', // Christiane is always premium
+              createdAt: serverTimestamp(),
+              deviceId: deviceId
+            };
+            await setDoc(userDocRef, newProfile);
+            
+            // Claim Device
             if (!deviceDoc.exists()) {
               await setDoc(deviceDocRef, { uid: firebaseUser.uid, claimedAt: serverTimestamp() });
             }
+            
+            setUserProfile(newProfile);
+          } else {
+            const data = userDoc.data() as UserProfile;
+            // If user doesn't have a deviceId yet, bind it
+            if (!data.deviceId) {
+              await setDoc(userDocRef, { deviceId: deviceId }, { merge: true });
+              if (!deviceDoc.exists()) {
+                await setDoc(deviceDocRef, { uid: firebaseUser.uid, claimedAt: serverTimestamp() });
+              }
+            }
+            setUserProfile({ ...data, isPremium: data.isPremium || firebaseUser.email === 'douliacameroun@gmail.com' });
           }
-          setUserProfile({ ...data, isPremium: data.isPremium || firebaseUser.email === 'douliacameroun@gmail.com' });
+        } catch (error) {
+          console.error("Error syncing profile:", error);
         }
       } else {
         setUser(null);
@@ -380,15 +387,20 @@ export default function App() {
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          setSessions(parsed.map((s: any) => ({
-            ...s,
-            timestamp: new Date(s.timestamp),
-            messages: s.messages.map((m: any) => ({
-              ...m,
-              timestamp: new Date(m.timestamp)
-            }))
-          })));
+          if (Array.isArray(parsed)) {
+            setSessions(parsed.map((s: any) => ({
+              ...s,
+              timestamp: new Date(s.timestamp),
+              messages: Array.isArray(s.messages) ? s.messages.map((m: any) => ({
+                ...m,
+                timestamp: new Date(m.timestamp)
+              })) : []
+            })));
+          } else {
+            setSessions([]);
+          }
         } catch (e) {
+          console.error("Error loading sessions:", e);
           setSessions([]);
         }
       } else {
