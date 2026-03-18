@@ -47,6 +47,8 @@ import {
   User as FirebaseUser
 } from './firebase';
 
+console.log("App.tsx: Module loading...");
+
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -273,38 +275,52 @@ export default function App() {
 
   // Initialize Gemini
   const ai = useMemo(() => {
-    const key = typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined;
-    return new GoogleGenAI({ apiKey: key || '' });
+    console.log("App.tsx: Initializing Gemini AI...");
+    const key = process.env.GEMINI_API_KEY || '';
+    return new GoogleGenAI({ apiKey: key });
   }, []);
   const chatRef = useRef<any>(null);
 
   // Get or Create Device ID
   const getDeviceId = () => {
-    let id = localStorage.getItem('coach_barreau_device_id');
-    if (!id) {
-      id = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-      localStorage.setItem('coach_barreau_device_id', id);
+    try {
+      let id = localStorage.getItem('coach_barreau_device_id');
+      if (!id) {
+        id = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        localStorage.setItem('coach_barreau_device_id', id);
+      }
+      return id;
+    } catch (e) {
+      console.warn("localStorage not available:", e);
+      return 'default_device';
     }
-    return id;
   };
 
   // Auth Listener
   useEffect(() => {
+    console.log("App.tsx: Auth listener starting...");
+    if (!auth || !db) {
+      console.error("App.tsx: Firebase Auth or Firestore not initialized.");
+      setIsAuthLoading(false);
+      return;
+    }
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      // Don't set loading to true here if we're already logged in or out
-      // Only set it if it's the initial check
+      console.log("App.tsx: Auth state changed:", firebaseUser?.uid || "null");
       
       if (firebaseUser) {
         setUser(firebaseUser);
         try {
           const deviceId = getDeviceId();
+          console.log("App.tsx: Device ID:", deviceId);
           
           // Check Device Binding
           const deviceDocRef = doc(db, 'devices', deviceId);
+          console.log("App.tsx: Fetching device doc...");
           const deviceDoc = await getDoc(deviceDocRef);
+          console.log("App.tsx: Device doc fetched, exists:", deviceDoc.exists());
           
           if (deviceDoc.exists() && deviceDoc.data().uid !== firebaseUser.uid && firebaseUser.email !== 'douliacameroun@gmail.com') {
-            // Device is already claimed by someone else
+            console.warn("App.tsx: Device blocked!");
             setIsDeviceBlocked(true);
             setIsAuthLoading(false);
             return;
@@ -312,16 +328,19 @@ export default function App() {
 
           // Sync Profile
           const userDocRef = doc(db, 'users', firebaseUser.uid);
+          console.log("App.tsx: Fetching user doc...");
           const userDoc = await getDoc(userDocRef);
+          console.log("App.tsx: User doc fetched, exists:", userDoc.exists());
           
           if (!userDoc.exists()) {
+            console.log("App.tsx: Creating new profile...");
             const newProfile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || '',
               displayName: firebaseUser.displayName || 'Étudiant',
               photoURL: firebaseUser.photoURL || '',
               firstLoginAt: new Date().toISOString(),
-              isPremium: firebaseUser.email === 'douliacameroun@gmail.com', // Christiane is always premium
+              isPremium: firebaseUser.email === 'douliacameroun@gmail.com',
               createdAt: serverTimestamp(),
               deviceId: deviceId
             };
@@ -334,6 +353,7 @@ export default function App() {
             
             setUserProfile(newProfile);
           } else {
+            console.log("App.tsx: Profile already exists, loading...");
             const data = userDoc.data() as UserProfile;
             // If user doesn't have a deviceId yet, bind it
             if (!data.deviceId) {
@@ -345,12 +365,14 @@ export default function App() {
             setUserProfile({ ...data, isPremium: data.isPremium || firebaseUser.email === 'douliacameroun@gmail.com' });
           }
         } catch (error) {
-          console.error("Error syncing profile:", error);
+          console.error("App.tsx: Error syncing profile:", error);
         }
       } else {
+        console.log("App.tsx: No user authenticated.");
         setUser(null);
         setUserProfile(null);
       }
+      console.log("App.tsx: Setting isAuthLoading to false.");
       setIsAuthLoading(false);
     });
     return () => unsubscribe();

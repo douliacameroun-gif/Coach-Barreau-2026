@@ -6,14 +6,26 @@ import { getFirestore, doc, getDoc, setDoc, serverTimestamp, onSnapshot } from '
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase SDK
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const auth = getAuth(app);
+let app;
+try {
+  app = initializeApp(firebaseConfig);
+} catch (e) {
+  console.error("Firebase init failed:", e);
+}
+
+export const db = app ? getFirestore(app, firebaseConfig.firestoreDatabaseId) : null;
+export const auth = app ? getAuth(app) : null;
 export const googleProvider = new GoogleAuthProvider();
 
 // Auth Helpers
-export const loginWithGoogle = () => signInWithPopup(auth, googleProvider);
-export const logout = () => signOut(auth);
+export const loginWithGoogle = () => {
+  if (!auth) throw new Error("Firebase Auth n'est pas initialisé.");
+  return signInWithPopup(auth, googleProvider);
+};
+export const logout = () => {
+  if (!auth) throw new Error("Firebase Auth n'est pas initialisé.");
+  return signOut(auth);
+};
 
 export { onAuthStateChanged, doc, getDoc, setDoc, serverTimestamp, onSnapshot };
 export type { User };
