@@ -20,9 +20,12 @@ import {
   X,
   File,
   Menu,
-  Trash2
+  Trash2,
+  Download
 } from 'lucide-react';
 import Markdown from 'react-markdown';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -51,6 +54,17 @@ RÈGLES DE FORMATAGE "VOICE-READY" ET "CLEAN-DISPLAY" (STRICTES) :
 ❺ Style de Ponctuation : Utilise uniquement le point, la virgule, le point d'interrogation et le point d'exclamation pour une synthèse vocale fluide.
 ❻ Simplicité Vocale : Fais des paragraphes très courts et aérés. Chaque phrase doit être simple, directe et courte. Saute des lignes entre chaque idée.
 
+RÈGLE DE SYNTHÈSE PDF (CRITIQUE) :
+À la fin de chaque résolution de cas pratique, de question juridique ou de problème complexe, tu DOIS proposer une synthèse structurée.
+Cette synthèse doit être incluse à la fin de ton message, délimitée par les balises [SYNTHESE] et [/SYNTHESE].
+Le contenu entre ces balises doit être structuré ainsi :
+- TITRE : [Titre du sujet]
+- RAPPEL DES FAITS : [Bref résumé]
+- PROBLÈME JURIDIQUE : [La question de droit]
+- SOLUTION : [La réponse détaillée]
+- ARTICLES DE LOI : [Liste des articles cités]
+- CONSEIL DU COACH : [Un conseil pour l'examen]
+
 Mission :
 ❶ Évaluation : Pose des questions de cours ou des mini-cas pratiques sur les 6 matières exigées.
 ❷ Correction : Attends la réponse de Christiane avant de donner la solution. Cite les articles de loi camerounais.
@@ -68,33 +82,42 @@ interface Message {
     type: string;
     data?: string;
   };
+  synthesis?: string;
+}
+
+interface Session {
+  id: string;
+  subject: string;
+  title: string;
+  messages: Message[];
+  timestamp: Date;
 }
 
 // --- Components ---
 
 export default function App() {
-  const [histories, setHistories] = useState<Record<string, Message[]>>(() => {
-    const saved = localStorage.getItem('coach_barreau_histories');
+  const [sessions, setSessions] = useState<Session[]>(() => {
+    const saved = localStorage.getItem('coach_barreau_sessions');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Convert string timestamps back to Date objects
-        Object.keys(parsed).forEach(key => {
-          parsed[key] = parsed[key].map((msg: any) => ({
-            ...msg,
-            timestamp: new Date(msg.timestamp)
-          }));
-        });
-        return parsed;
+        return parsed.map((s: any) => ({
+          ...s,
+          timestamp: new Date(s.timestamp),
+          messages: s.messages.map((m: any) => ({
+            ...m,
+            timestamp: new Date(m.timestamp)
+          }))
+        }));
       } catch (e) {
-        return {};
+        return [];
       }
     }
-    return {};
+    return [];
   });
 
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeSubject, setActiveSubject] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isTtsEnabled, setIsTtsEnabled] = useState(true);
@@ -109,32 +132,37 @@ export default function App() {
   const recognitionRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Derived state
+  const activeSession = sessions.find(s => s.id === activeSessionId);
+  const messages = activeSession?.messages || [];
+
   // Initialize Gemini
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
   const chatRef = useRef<any>(null);
 
-  // Save histories to localStorage whenever they change
+  // Save sessions to localStorage whenever they change
   useEffect(() => {
-    localStorage.setItem('coach_barreau_histories', JSON.stringify(histories));
-  }, [histories]);
+    localStorage.setItem('coach_barreau_sessions', JSON.stringify(sessions));
+  }, [sessions]);
 
-  // Load messages when activeSubject changes
+  // Load chat session when activeSessionId changes
   useEffect(() => {
-    if (activeSubject) {
-      setMessages(histories[activeSubject] || []);
-      // Reset chat session when switching subjects to keep context clean per subject
-      chatRef.current = ai.chats.create({
-        model: "gemini-3-flash-preview",
-        config: {
-          systemInstruction: `${SYSTEM_INSTRUCTION}\n\nLe sujet actuel de révision est : ${activeSubject}. Concentre-toi sur cette matière.`,
-        },
-        history: (histories[activeSubject] || []).map(m => ({
-          role: m.role,
-          parts: [{ text: m.content }]
-        }))
-      });
+    if (activeSessionId) {
+      const session = sessions.find(s => s.id === activeSessionId);
+      if (session) {
+        chatRef.current = ai.chats.create({
+          model: "gemini-3-flash-preview",
+          config: {
+            systemInstruction: `${SYSTEM_INSTRUCTION}\n\nLe sujet actuel de révision est : ${session.subject}. Concentre-toi sur cette matière.`,
+          },
+          history: session.messages.map(m => ({
+            role: m.role,
+            parts: [{ text: m.content }]
+          }))
+        });
+      }
     }
-  }, [activeSubject]);
+  }, [activeSessionId]);
 
   useEffect(() => {
     if (!chatRef.current) {
@@ -186,25 +214,117 @@ export default function App() {
   };
 
   const handleInitialGreeting = async () => {
-    if (messages.length > 0) return; // Don't greet if history exists
+    if (messages.length > 0) return;
     setIsTyping(true);
     try {
       const response = await chatRef.current.sendMessage({ message: "Bonjour Coach, je suis prête pour ma session de révision." });
       const text = response.text;
-      const newMessage: Message = { role: 'model', content: text, timestamp: new Date() };
       
-      const newMessages = [newMessage];
-      setMessages(newMessages);
-      if (activeSubject) {
-        setHistories(prev => ({ ...prev, [activeSubject]: newMessages }));
-      }
+      const { cleanContent, synthesis } = extractSynthesis(text);
+      const newMessage: Message = { 
+        role: 'model', 
+        content: cleanContent, 
+        timestamp: new Date(),
+        synthesis: synthesis || undefined
+      };
       
-      if (isTtsEnabled) generateSpeech(text);
+      updateActiveSession([newMessage]);
+      
+      if (isTtsEnabled) generateSpeech(cleanContent);
     } catch (error) {
       console.error("Error getting greeting:", error);
     } finally {
       setIsTyping(false);
     }
+  };
+
+  const extractSynthesis = (text: string) => {
+    const regex = /\[SYNTHESE\]([\s\S]*?)\[\/SYNTHESE\]/;
+    const match = text.match(regex);
+    if (match) {
+      const synthesis = match[1].trim();
+      const cleanContent = text.replace(regex, '').trim();
+      return { cleanContent, synthesis };
+    }
+    return { cleanContent: text, synthesis: null };
+  };
+
+  const generatePDF = (synthesisText: string) => {
+    const doc = new jsPDF();
+    
+    // Header
+    doc.setFillColor(79, 70, 229); // Indigo-600
+    doc.rect(0, 0, 210, 40, 'F');
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(22);
+    doc.setFont('helvetica', 'bold');
+    doc.text('COACH BARREAU 2026', 105, 20, { align: 'center' });
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text('SYNTHÈSE DE RÉVISION - SESSION DE CHRISTIANE ENDALLE', 105, 30, { align: 'center' });
+
+    // Content parsing
+    const lines = synthesisText.split('\n');
+    let currentY = 55;
+    
+    doc.setTextColor(30, 41, 59); // Slate-800
+    
+    const sections: { title: string, content: string }[] = [];
+    let currentSection: { title: string, content: string } | null = null;
+
+    lines.forEach(line => {
+      if (line.includes(':')) {
+        const [title, ...rest] = line.split(':');
+        if (currentSection) sections.push(currentSection);
+        currentSection = { title: title.trim(), content: rest.join(':').trim() };
+      } else if (currentSection && line.trim()) {
+        currentSection.content += ' ' + line.trim();
+      }
+    });
+    if (currentSection) sections.push(currentSection);
+
+    sections.forEach(section => {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(12);
+      doc.setTextColor(79, 70, 229);
+      doc.text(section.title, 20, currentY);
+      currentY += 7;
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      doc.setTextColor(51, 65, 85);
+      
+      const splitText = doc.splitTextToSize(section.content, 170);
+      doc.text(splitText, 20, currentY);
+      currentY += (splitText.length * 5) + 10;
+
+      if (currentY > 270) {
+        doc.addPage();
+        currentY = 20;
+      }
+    });
+
+    // Footer
+    const pageCount = (doc as any).internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Généré par Coach Barreau 2026 - Page ${i} sur ${pageCount}`, 105, 285, { align: 'center' });
+    }
+
+    doc.save(`Synthese_Coach_Barreau_${new Date().getTime()}.pdf`);
+  };
+
+  const updateActiveSession = (newMessages: Message[]) => {
+    if (!activeSessionId) return;
+    setSessions(prev => prev.map(s => 
+      s.id === activeSessionId 
+        ? { ...s, messages: newMessages, timestamp: new Date() } 
+        : s
+    ));
   };
 
   const generateSpeech = async (text: string) => {
@@ -255,14 +375,11 @@ export default function App() {
   };
 
   const handleSendFromVoice = async (text: string) => {
-    if (!text.trim() || isTyping) return;
+    if (!text.trim() || isTyping || !activeSessionId) return;
     
     const userMessage: Message = { role: 'user', content: text, timestamp: new Date() };
     const updatedMessages = [...messages, userMessage];
-    setMessages(updatedMessages);
-    if (activeSubject) {
-      setHistories(prev => ({ ...prev, [activeSubject]: updatedMessages }));
-    }
+    updateActiveSession(updatedMessages);
     
     setInput('');
     setIsTyping(true);
@@ -270,15 +387,19 @@ export default function App() {
     try {
       const response = await chatRef.current.sendMessage({ message: text });
       const responseText = response.text;
-      const modelMessage: Message = { role: 'model', content: responseText, timestamp: new Date() };
+      
+      const { cleanContent, synthesis } = extractSynthesis(responseText);
+      const modelMessage: Message = { 
+        role: 'model', 
+        content: cleanContent, 
+        timestamp: new Date(),
+        synthesis: synthesis || undefined
+      };
       
       const finalMessages = [...updatedMessages, modelMessage];
-      setMessages(finalMessages);
-      if (activeSubject) {
-        setHistories(prev => ({ ...prev, [activeSubject]: finalMessages }));
-      }
+      updateActiveSession(finalMessages);
       
-      if (isTtsEnabled) generateSpeech(responseText);
+      if (isTtsEnabled) generateSpeech(cleanContent);
     } catch (error) {
       console.error("Chat Error:", error);
     } finally {
@@ -288,7 +409,7 @@ export default function App() {
 
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if ((!input.trim() && !selectedFile) || isTyping) return;
+    if (((!input.trim() && !selectedFile) || isTyping) || !activeSessionId) return;
 
     const userMessage: Message = { 
       role: 'user', 
@@ -302,10 +423,7 @@ export default function App() {
     };
 
     const updatedWithUser = [...messages, userMessage];
-    setMessages(updatedWithUser);
-    if (activeSubject) {
-      setHistories(prev => ({ ...prev, [activeSubject]: updatedWithUser }));
-    }
+    updateActiveSession(updatedWithUser);
 
     const currentInput = input;
     const currentFile = selectedFile;
@@ -331,15 +449,18 @@ export default function App() {
       }
 
       const text = response.text;
-      const modelMessage: Message = { role: 'model', content: text, timestamp: new Date() };
+      const { cleanContent, synthesis } = extractSynthesis(text);
+      const modelMessage: Message = { 
+        role: 'model', 
+        content: cleanContent, 
+        timestamp: new Date(),
+        synthesis: synthesis || undefined
+      };
       
       const finalMessages = [...updatedWithUser, modelMessage];
-      setMessages(finalMessages);
-      if (activeSubject) {
-        setHistories(prev => ({ ...prev, [activeSubject]: finalMessages }));
-      }
+      updateActiveSession(finalMessages);
       
-      if (isTtsEnabled) generateSpeech(text);
+      if (isTtsEnabled) generateSpeech(cleanContent);
     } catch (error) {
       console.error("Chat Error:", error);
       const errorMessage: Message = { 
@@ -348,10 +469,7 @@ export default function App() {
         timestamp: new Date() 
       };
       const finalWithErr = [...updatedWithUser, errorMessage];
-      setMessages(finalWithErr);
-      if (activeSubject) {
-        setHistories(prev => ({ ...prev, [activeSubject]: finalWithErr }));
-      }
+      updateActiveSession(finalWithErr);
     } finally {
       setIsTyping(false);
     }
@@ -375,33 +493,56 @@ export default function App() {
     window.print();
   };
 
+  const startNewSession = (subject: string) => {
+    const newSession: Session = {
+      id: Math.random().toString(36).substring(2, 15),
+      subject,
+      title: `${subject} - ${new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
+      messages: [],
+      timestamp: new Date()
+    };
+    setSessions(prev => [newSession, ...prev]);
+    setActiveSessionId(newSession.id);
+    setActiveSubject(subject);
+    setIsSidebarOpen(false);
+    
+    // Trigger initial greeting for the new session
+    setTimeout(() => {
+      handleInitialGreeting();
+    }, 100);
+  };
+
+  const loadSession = (sessionId: string) => {
+    const session = sessions.find(s => s.id === sessionId);
+    if (session) {
+      setActiveSessionId(sessionId);
+      setActiveSubject(session.subject);
+      setIsSidebarOpen(false);
+    }
+  };
+
   const clearHistory = () => {
-    if (activeSubject) {
-      const newHistories = { ...histories };
-      delete newHistories[activeSubject];
-      setHistories(newHistories);
-      setMessages([]);
+    if (activeSessionId) {
+      setSessions(prev => prev.filter(s => s.id !== activeSessionId));
+      setActiveSessionId(null);
+      setActiveSubject(null);
       // Re-initialize chat
       chatRef.current = ai.chats.create({
         model: "gemini-3-flash-preview",
         config: {
-          systemInstruction: `${SYSTEM_INSTRUCTION}\n\nLe sujet actuel de révision est : ${activeSubject}. Concentre-toi sur cette matière.`,
+          systemInstruction: SYSTEM_INSTRUCTION,
         },
       });
     }
   };
 
   const selectSubject = (subjectName: string) => {
-    setActiveSubject(subjectName);
-    setIsSidebarOpen(false); // Close sidebar on mobile
-    
-    // If no history for this subject, send a trigger message
-    if (!histories[subjectName] || histories[subjectName].length === 0) {
-      setInput(`Je souhaite réviser le sujet suivant : ${subjectName}`);
-      setTimeout(() => {
-        const btn = document.getElementById('send-button');
-        btn?.click();
-      }, 100);
+    // Check if there's an existing session for this subject
+    const existingSession = sessions.find(s => s.subject === subjectName);
+    if (existingSession) {
+      loadSession(existingSession.id);
+    } else {
+      startNewSession(subjectName);
     }
   };
 
@@ -443,43 +584,77 @@ export default function App() {
               <BookOpen size={12} className="text-indigo-500" /> Matières à réviser
             </h2>
             <div className="space-y-2">
-              {SUBJECTS.map((sub) => (
-                <button
-                  key={sub.id}
-                  onClick={() => selectSubject(sub.name)}
-                  className={cn(
-                    "w-full flex items-center gap-3 p-3 rounded-xl transition-all text-left border group",
-                    activeSubject === sub.name 
-                      ? "bg-indigo-600 border-indigo-500 shadow-md shadow-indigo-500/10" 
-                      : "bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600"
-                  )}
-                >
-                  <div className={cn(
-                    "p-2 rounded-lg transition-colors",
-                    activeSubject === sub.name ? "bg-white/20 text-white" : cn("bg-slate-900", sub.color)
-                  )}>
-                    <sub.icon size={16} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <span className={cn(
-                      "text-xs font-semibold leading-tight block truncate",
-                      activeSubject === sub.name ? "text-white" : "text-slate-300 group-hover:text-white"
-                    )}>
-                      {sub.name}
-                    </span>
-                    {histories[sub.name] && histories[sub.name].length > 0 && (
-                      <span className="text-[9px] text-indigo-300/60 font-medium">
-                        {histories[sub.name].length} messages sauvegardés
-                      </span>
+              {SUBJECTS.map((sub) => {
+                const subjectSessions = sessions.filter(s => s.subject === sub.name);
+                return (
+                  <button
+                    key={sub.id}
+                    onClick={() => selectSubject(sub.name)}
+                    className={cn(
+                      "w-full flex items-center gap-3 p-3 rounded-xl transition-all text-left border group",
+                      activeSubject === sub.name 
+                        ? "bg-indigo-600 border-indigo-500 shadow-md shadow-indigo-500/10" 
+                        : "bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600"
                     )}
-                  </div>
-                </button>
-              ))}
+                  >
+                    <div className={cn(
+                      "p-2 rounded-lg transition-colors",
+                      activeSubject === sub.name ? "bg-white/20 text-white" : cn("bg-slate-900", sub.color)
+                    )}>
+                      <sub.icon size={16} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className={cn(
+                        "text-xs font-semibold leading-tight block truncate",
+                        activeSubject === sub.name ? "text-white" : "text-slate-300 group-hover:text-white"
+                      )}>
+                        {sub.name}
+                      </span>
+                      {subjectSessions.length > 0 && (
+                        <span className="text-[9px] text-indigo-300/60 font-medium">
+                          {subjectSessions.length} session(s) active(s)
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </section>
 
-          {activeSubject && histories[activeSubject] && histories[activeSubject].length > 0 && (
+          {sessions.length > 0 && (
+            <section>
+              <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+                <RefreshCw size={12} className="text-indigo-500" /> Historique des Sauvegardes
+              </h2>
+              <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
+                {sessions.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => loadSession(s.id)}
+                    className={cn(
+                      "w-full flex flex-col p-2.5 rounded-lg transition-all text-left border text-[10px]",
+                      activeSessionId === s.id
+                        ? "bg-indigo-600/20 border-indigo-500/30 text-white"
+                        : "bg-slate-800/20 border-slate-700/30 text-slate-400 hover:bg-slate-800/40"
+                    )}
+                  >
+                    <span className="font-bold truncate w-full">{s.title}</span>
+                    <span className="opacity-50">{s.messages.length} messages</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {activeSubject && (
             <section className="pt-4 border-t border-slate-800 space-y-2">
+              <button
+                onClick={() => startNewSession(activeSubject)}
+                className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 transition-all text-[10px] font-bold uppercase tracking-wider"
+              >
+                <RefreshCw size={14} /> Nouvelle Session
+              </button>
               <button
                 onClick={printHistory}
                 className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-all text-[10px] font-bold uppercase tracking-wider"
@@ -490,7 +665,7 @@ export default function App() {
                 onClick={clearHistory}
                 className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-all text-[10px] font-bold uppercase tracking-wider"
               >
-                <Trash2 size={14} /> Effacer l'historique
+                <Trash2 size={14} /> Supprimer cette session
               </button>
             </section>
           )}
@@ -660,6 +835,21 @@ export default function App() {
                         {msg.content}
                       </Markdown>
                     </div>
+
+                    {msg.synthesis && (
+                      <div className="mt-4 pt-4 border-t border-indigo-100">
+                        <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                          <FileText size={12} /> Synthèse disponible
+                        </p>
+                        <button
+                          onClick={() => generatePDF(msg.synthesis!)}
+                          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200"
+                        >
+                          <Download size={14} /> Télécharger le Corrigé (PDF)
+                        </button>
+                      </div>
+                    )}
+
                     <div className={cn(
                       "text-[10px] mt-4 font-bold opacity-30 uppercase tracking-[0.15em]",
                       msg.role === 'user' ? "text-right" : "text-left"
