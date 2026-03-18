@@ -52,15 +52,21 @@ REGLES DE FORMATAGE ABSOLUES
 ❷ INTERDICTION d'utiliser des balises HTML entre chevrons.
 ❸ Écris normalement, sans gras et sans italique puisque les astérisques sont interdits.
 ❹ Pour les listes et les choix, utilise exclusivement les puces numériques : ❶, ❷, ❸, ❹, ❺, ❻.
-❺ Fais des phrases courtes. Saute deux lignes entre chaque paragraphe pour que ce soit clair.
+❺ Fais des phrases courtes. Saute deux lignes entre chaque paragraphe pour que ce soit clair sur son grand écran.
 
 METHODE DE COACHING HAUTE PERFORMANCE
-❶ IMPOSITION DU SUJET (RÈGLE STRICTE) : Dès qu'une matière est sélectionnée, tu NE DOIS PAS demander à Christiane ce qu'elle veut faire. Tu dois IMMÉDIATEMENT et DIRECTEMENT lui imposer un cas pratique, un problème juridique ou une question de méthodologie pointue sur cette matière. 
-❷ ATTENTE : Une fois l'énoncé donné, pose une question claire et attends sa réponse.
-❸ CORRECTION ET SYNTHESE : Analyse sa réponse, corrige ses erreurs avec une très grande rigueur en citant obligatoirement les textes de loi (Cameroun, OHADA). Ne lui donne pas la solution si elle se trompe, mets-la sur la voie.
+❶ EVALUATION : Pose une question à la fois. Propose des cas pratiques basés sur la loi camerounaise.
+❷ CORRECTION : Si Christiane fait une erreur, explique-lui pourquoi en citant l'article de loi. Ne lui donne pas la réponse tout de suite, aide-la à trouver.
+❸ STRUCTURE : Organise tes révisions autour des 7 matières de l'examen : Droit de la famille, Procédure civile, Droit pénal, Voies d'exécution, Droit social, Droit administratif et Méthodologie.
+
+INSTRUCTIONS D'INTERACTION (STRICTES) :
+❶ ACCUEIL INITIAL : Au tout début, accueille Christiane chaleureusement. Présente-toi comme son Coach Barreau 2026. Explique-lui que tu es là pour l'aider à maîtriser le droit camerounais, les procédures et les méthodologies d'examen. Invite-la ensuite à choisir une matière dans le menu latéral pour commencer.
+❷ IMPOSITION DU SUJET : Dès que Christiane choisit une matière, tu dois IMMÉDIATEMENT introduire un sujet, un problème juridique, un cas pratique ou une question de méthodologie en rapport avec cette matière. Tu ne dois PAS lui proposer de liste de choix. Tu décides du sujet et tu lui demandes de le traiter.
+❸ PHASE DE RÉPONSE : Attends que Christiane réponde ou traite le sujet.
+❹ CORRECTION ET SYNTHÈSE : Analyse sa réponse, corrige ses erreurs avec pédagogie en citant les textes de loi (Cameroun, OHADA) et propose une synthèse structurée.
 
 RÈGLE DE SYNTHÈSE PDF :
-À la fin de chaque correction finale d'un cas, tu DOIS proposer une synthèse structurée.
+À la fin de chaque correction, tu DOIS proposer une synthèse structurée.
 Cette synthèse doit être incluse à la fin de ton message, délimitée par les balises [SYNTHESE] et [/SYNTHESE].`;
 
 interface Message {
@@ -127,7 +133,7 @@ export default function App() {
   const messages = activeSession?.messages || [];
 
   // Initialize Gemini
-  const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || '' });
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
   const chatRef = useRef<any>(null);
 
   // Save sessions to localStorage whenever they change
@@ -200,55 +206,29 @@ export default function App() {
 
   const startSession = () => {
     setIsStarted(true);
-    if (!activeSessionId) {
-      const newSession: Session = {
-        id: Math.random().toString(36).substring(2, 15),
-        subject: 'Accueil',
-        title: `Accueil - ${new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
-        messages: [],
-        timestamp: new Date()
-      };
-      setSessions(prev => [newSession, ...prev]);
-      setActiveSessionId(newSession.id);
-      
-      setTimeout(() => {
-        handleInitialGreeting();
-      }, 300);
-    } else {
-      handleInitialGreeting();
-    }
+    handleInitialGreeting();
   };
 
   const handleInitialGreeting = async (subject?: string) => {
     if (messages.length > 0 && !subject) return;
     setIsTyping(true);
     try {
-      if (!chatRef.current) {
-        chatRef.current = ai.chats.create({
-          model: "gemini-3-flash-preview",
-          config: {
-            systemInstruction: SYSTEM_INSTRUCTION,
-          },
-        });
-      }
-
       const prompt = subject 
-        ? `INSTRUCTION SYSTEME URGENTE : Je suis Christiane et je viens de cliquer sur la matière "${subject}". En tant que Coach, impose-moi IMMÉDIATEMENT un sujet de réflexion, un problème juridique ou un cas pratique sur le thème "${subject}". N'attends pas mon accord, ne me demande pas ce que je veux faire. Rédige l'énoncé complet du cas ou la question maintenant et dis-moi de le traiter.`
-        : "Bonjour Christiane. Accueille-moi chaleureusement en te présentant comme mon Coach Barreau 2026. Invite-moi ensuite à choisir une matière dans le menu latéral pour que nous puissions commencer à travailler un cas pratique.";
+        ? `Bonjour Coach, je suis Christiane. J'ai choisi la matière : ${subject}. Impose-moi directement un sujet, un problème, un cas pratique ou une question de méthodologie juridique à traiter immédiatement.`
+        : "Bonjour Coach, je suis Christiane. Accueille-moi chaleureusement en te présentant comme mon Coach Barreau 2026. Explique-moi que tu es là pour m'accompagner dans ma réussite à travers des révisions intensives, des cas pratiques et la maîtrise des méthodologies juridiques. Invite-moi ensuite à choisir une matière dans le menu.";
         
       const response = await chatRef.current.sendMessage({ message: prompt });
       const text = response.text;
       
       const { cleanContent, synthesis } = extractSynthesis(text);
+      const newMessage: Message = { 
+        role: 'model', 
+        content: cleanContent, 
+        timestamp: new Date(),
+        synthesis: synthesis || undefined
+      };
       
-      if (subject) {
-          const invisibleUserMessage: Message = { role: 'user', content: `[Sélection de la matière : ${subject}]`, timestamp: new Date() };
-          const modelMessage: Message = { role: 'model', content: cleanContent, timestamp: new Date(), synthesis: synthesis || undefined };
-          updateActiveSession([...messages, invisibleUserMessage, modelMessage]);
-      } else {
-          const newMessage: Message = { role: 'model', content: cleanContent, timestamp: new Date(), synthesis: synthesis || undefined };
-          updateActiveSession([newMessage]);
-      }
+      updateActiveSession([newMessage]);
       
       if (isTtsEnabled) generateSpeech(cleanContent);
     } catch (error) {
@@ -273,7 +253,7 @@ export default function App() {
     const doc = new jsPDF();
     
     // Header
-    doc.setFillColor(79, 70, 229);
+    doc.setFillColor(79, 70, 229); // Indigo-600
     doc.rect(0, 0, 210, 40, 'F');
     
     doc.setTextColor(255, 255, 255);
@@ -285,10 +265,11 @@ export default function App() {
     doc.setFont('helvetica', 'normal');
     doc.text('SYNTHÈSE DE RÉVISION - SESSION DE CHRISTIANE ENDALLE', 105, 30, { align: 'center' });
 
+    // Content parsing
     const lines = synthesisText.split('\n');
     let currentY = 55;
     
-    doc.setTextColor(30, 41, 59);
+    doc.setTextColor(30, 41, 59); // Slate-800
     
     const sections: { title: string, content: string }[] = [];
     let currentSection: { title: string, content: string } | null = null;
@@ -325,6 +306,7 @@ export default function App() {
       }
     });
 
+    // Footer
     const pageCount = (doc as any).internal.getNumberOfPages();
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
@@ -524,6 +506,7 @@ export default function App() {
     setActiveSubject(subject);
     setIsSidebarOpen(false);
     
+    // Trigger initial greeting for the new session
     setTimeout(() => {
       handleInitialGreeting(subject);
     }, 100);
@@ -535,12 +518,6 @@ export default function App() {
       setActiveSessionId(sessionId);
       setActiveSubject(session.subject);
       setIsSidebarOpen(false);
-      
-      if (session.messages.length === 0) {
-        setTimeout(() => {
-          handleInitialGreeting(session.subject);
-        }, 100);
-      }
     }
   };
 
@@ -549,6 +526,7 @@ export default function App() {
       setSessions(prev => prev.filter(s => s.id !== activeSessionId));
       setActiveSessionId(null);
       setActiveSubject(null);
+      // Re-initialize chat
       chatRef.current = ai.chats.create({
         model: "gemini-3-flash-preview",
         config: {
@@ -559,6 +537,7 @@ export default function App() {
   };
 
   const selectSubject = (subjectName: string) => {
+    // Check if there's an existing session for this subject
     const existingSession = sessions.find(s => s.subject === subjectName);
     if (existingSession) {
       loadSession(existingSession.id);
@@ -781,9 +760,9 @@ export default function App() {
             <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-xl shadow-indigo-500/30 mb-6 animate-bounce">
               <Scale className="text-white w-8 h-8" />
             </div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-3">Prête pour la réussite ?</h2>
+            <h2 className="text-2xl font-bold text-slate-900 mb-3">Prête pour vos révisions ?</h2>
             <p className="text-sm text-slate-500 max-w-sm mb-8 leading-relaxed">
-              Bonjour Christiane. Je suis votre Coach Barreau 2026. Cliquez sur le bouton ci-dessous pour lancer votre session de révision personnalisée.
+              Bonjour Christiane. Choisissez une matière ou un sujet dans le menu pour commencer ou reprendre vos révisions. Vous pouvez également me poser directement une question.
             </p>
             <button 
               onClick={startSession}
