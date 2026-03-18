@@ -129,6 +129,22 @@ interface UserProfile {
 // --- Auth Components ---
 
 function Login({ onLogin }: { onLogin: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleLoginClick = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      await onLogin();
+    } catch (err: any) {
+      console.error("Login component error:", err);
+      setError(err.message || "Une erreur est survenue lors de la connexion.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col items-center justify-center bg-slate-900 p-6 text-center">
       <div className="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center shadow-2xl shadow-indigo-500/20 mb-8 animate-in fade-in zoom-in duration-700">
@@ -138,13 +154,30 @@ function Login({ onLogin }: { onLogin: () => void }) {
       <p className="text-slate-400 max-w-xs mb-10 leading-relaxed">
         Votre compagnon d'étude intelligent pour réussir l'examen du barreau au Cameroun.
       </p>
+      
+      {error && (
+        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-400 text-sm max-w-xs">
+          {error}
+        </div>
+      )}
+
       <button
-        onClick={onLogin}
-        className="flex items-center gap-3 bg-white text-slate-900 px-8 py-4 rounded-2xl font-bold text-lg hover:bg-slate-100 transition-all shadow-xl active:scale-95 group"
+        onClick={handleLoginClick}
+        disabled={loading}
+        className="flex items-center gap-3 bg-white text-slate-900 px-8 py-4 rounded-2xl font-bold text-lg hover:bg-slate-100 transition-all shadow-xl active:scale-95 group disabled:opacity-50"
       >
-        <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
-        Se connecter avec Google
+        {loading ? (
+          <Loader2 className="w-5 h-5 animate-spin" />
+        ) : (
+          <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
+        )}
+        {loading ? "Connexion..." : "Se connecter avec Google"}
       </button>
+      
+      <p className="mt-4 text-[10px] text-slate-500 max-w-xs leading-relaxed">
+        Si rien ne se passe, assurez-vous que votre navigateur autorise les fenêtres surgissantes (popups).
+      </p>
+
       <p className="mt-8 text-[10px] text-slate-500 uppercase tracking-widest font-bold">
         Accès réservé aux candidats
       </p>
@@ -770,6 +803,21 @@ export default function App() {
     }
   };
 
+  const handleLogin = async () => {
+    try {
+      if (!auth) {
+        throw new Error("Le service d'authentification n'est pas prêt.");
+      }
+      console.log("Starting Google Login...");
+      await loginWithGoogle();
+      console.log("Google Login successful!");
+    } catch (error: any) {
+      console.error("Google Login failed:", error);
+      // Re-throw to be caught by Login component
+      throw error;
+    }
+  };
+
   if (isAuthLoading) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-slate-900 text-white">
@@ -780,7 +828,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <Login onLogin={loginWithGoogle} />;
+    return <Login onLogin={handleLogin} />;
   }
 
   if (isDeviceBlocked) {
