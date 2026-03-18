@@ -1132,105 +1132,111 @@ export default function App() {
         {/* Chat Area */}
         <div 
           ref={scrollRef}
-          className="flex-1 overflow-y-auto p-4 sm:p-10 space-y-6 sm:space-y-10 scroll-smooth"
+          className="flex-1 overflow-y-auto p-4 sm:p-10 scroll-smooth notranslate"
+          translate="no"
         >
-          {messages.length === 0 && !isTyping && (
-            <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-60">
-              <BookOpen size={48} className="text-indigo-200 mb-4" />
-              <h3 className="text-lg font-bold text-slate-400">Choisissez une matière</h3>
-              <p className="text-sm text-slate-400 max-w-[200px]">Sélectionnez un sujet dans le menu pour commencer ou reprendre vos révisions.</p>
-            </div>
-          )}
-          {messages.map((msg) => (
-            <div 
-              key={msg.id} 
-              className={cn(
-                "flex w-full animate-in fade-in slide-in-from-bottom-4 duration-500",
-                msg.role === 'user' ? "justify-end" : "justify-start"
-              )}
-            >
-              <div className={cn(
-                "flex gap-3 sm:gap-4 max-w-[90%] sm:max-w-[85%]",
-                msg.role === 'user' ? "flex-row-reverse" : "flex-row"
-              )}>
-                <div className={cn(
-                  "w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center shadow-sm mt-0.5 overflow-hidden border border-slate-200",
-                  msg.role === 'user' ? "bg-slate-100" : "bg-indigo-600 shadow-lg shadow-indigo-500/20"
-                )}>
-                  {msg.role === 'user' ? (
-                    <img 
-                      src="https://i.postimg.cc/cJQfnr2V/Whats-App-Image-2025-09-10-at-11-07-09-(1).jpg" 
-                      alt="Christiane" 
-                      className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <Scale className="text-white w-5 h-5" />
-                  )}
-                </div>
-                
-                <div className={cn(
-                  "flex flex-col gap-2",
-                  msg.role === 'user' ? "items-end" : "items-start"
-                )}>
-                  {msg.attachment && (
-                    <div className="flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-600 text-xs font-bold shadow-sm">
-                      <File size={14} className="text-indigo-600" />
-                      <span>{msg.attachment.name}</span>
-                    </div>
-                  )}
-                  <div className={cn(
-                    "p-3.5 rounded-2xl shadow-sm border leading-relaxed",
-                    msg.role === 'user' 
-                      ? "bg-white border-slate-200 text-slate-800 rounded-tr-none" 
-                      : "bg-indigo-50/50 border-indigo-100 text-slate-900 rounded-tl-none"
-                  )}>
-                    <div className="markdown-body prose prose-slate max-w-none prose-p:leading-relaxed prose-strong:text-indigo-900 prose-p:my-1 prose-ul:my-1 prose-li:my-0.5">
-                      <Markdown>
-                        {msg.content}
-                      </Markdown>
-                    </div>
-
-                    {msg.synthesis && (
-                      <div className="mt-4 pt-4 border-t border-indigo-100">
-                        <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                          <FileText size={12} /> Synthèse disponible
-                        </p>
-                        <button
-                          onClick={() => generatePDF(msg.synthesis!)}
-                          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200"
-                        >
-                          <Download size={14} /> Télécharger le Corrigé (PDF)
-                        </button>
-                      </div>
+          <div className="flex flex-col gap-6 sm:gap-10 min-h-full">
+            {messages.length === 0 && !isTyping ? (
+              <div key="empty-state" className="flex-1 flex flex-col items-center justify-center text-center p-8 opacity-60">
+                <BookOpen size={48} className="text-indigo-200 mb-4" />
+                <h3 className="text-lg font-bold text-slate-400">Choisissez une matière</h3>
+                <p className="text-sm text-slate-400 max-w-[200px]">Sélectionnez un sujet dans le menu pour commencer ou reprendre vos révisions.</p>
+              </div>
+            ) : (
+              <>
+                {messages.map((msg) => (
+                  <div 
+                    key={msg.id} 
+                    className={cn(
+                      "flex w-full animate-in fade-in slide-in-from-bottom-4 duration-500",
+                      msg.role === 'user' ? "justify-end" : "justify-start"
                     )}
-
+                  >
                     <div className={cn(
-                      "text-[10px] mt-4 font-bold opacity-30 uppercase tracking-[0.15em]",
-                      msg.role === 'user' ? "text-right" : "text-left"
+                      "flex gap-3 sm:gap-4 max-w-[90%] sm:max-w-[85%]",
+                      msg.role === 'user' ? "flex-row-reverse" : "flex-row"
                     )}>
-                      {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      <div className={cn(
+                        "w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center shadow-sm mt-0.5 overflow-hidden border border-slate-200",
+                        msg.role === 'user' ? "bg-slate-100" : "bg-indigo-600 shadow-lg shadow-indigo-500/20"
+                      )}>
+                        {msg.role === 'user' ? (
+                          <img 
+                            src="https://i.postimg.cc/cJQfnr2V/Whats-App-Image-2025-09-10-at-11-07-09-(1).jpg" 
+                            alt="Christiane" 
+                            className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <Scale className="text-white w-5 h-5" />
+                        )}
+                      </div>
+                      
+                      <div className={cn(
+                        "flex flex-col gap-2",
+                        msg.role === 'user' ? "items-end" : "items-start"
+                      )}>
+                        {msg.attachment && (
+                          <div className="flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-600 text-xs font-bold shadow-sm">
+                            <File size={14} className="text-indigo-600" />
+                            <span>{msg.attachment.name}</span>
+                          </div>
+                        )}
+                        <div className={cn(
+                          "p-3.5 rounded-2xl shadow-sm border leading-relaxed",
+                          msg.role === 'user' 
+                            ? "bg-white border-slate-200 text-slate-800 rounded-tr-none" 
+                            : "bg-indigo-50/50 border-indigo-100 text-slate-900 rounded-tl-none"
+                        )}>
+                          <div className="markdown-body prose prose-slate max-w-none prose-p:leading-relaxed prose-strong:text-indigo-900 prose-p:my-1 prose-ul:my-1 prose-li:my-0.5" translate="no">
+                            <Markdown key={`md-${msg.id}`}>
+                              {msg.content}
+                            </Markdown>
+                          </div>
+
+                          {msg.synthesis && (
+                            <div className="mt-4 pt-4 border-t border-indigo-100">
+                              <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                <FileText size={12} /> Synthèse disponible
+                              </p>
+                              <button
+                                onClick={() => generatePDF(msg.synthesis!)}
+                                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200"
+                              >
+                                <Download size={14} /> Télécharger le Corrigé (PDF)
+                              </button>
+                            </div>
+                          )}
+
+                          <div className={cn(
+                            "text-[10px] mt-4 font-bold opacity-30 uppercase tracking-[0.15em]",
+                            msg.role === 'user' ? "text-right" : "text-left"
+                          )}>
+                            {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
-            </div>
-          ))}
-          
-          {isTyping && (
-            <div key="typing-indicator" className="flex justify-start animate-in fade-in duration-300">
-              <div className="flex gap-3 sm:gap-6">
-                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                  <Loader2 className="text-white w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
-                </div>
-                <div className="bg-indigo-50/50 border border-indigo-100 p-3 sm:p-5 rounded-2xl sm:rounded-[2rem] rounded-tl-none flex items-center gap-2">
-                  <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
-                  <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
-                  <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"></span>
-                </div>
-              </div>
-            </div>
-          )}
+                ))}
+                
+                {isTyping && (
+                  <div key="typing-indicator" className="flex justify-start animate-in fade-in duration-300">
+                    <div className="flex gap-3 sm:gap-6">
+                      <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                        <Loader2 className="text-white w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
+                      </div>
+                      <div className="bg-indigo-50/50 border border-indigo-100 p-3 sm:p-5 rounded-2xl sm:rounded-[2rem] rounded-tl-none flex items-center gap-2">
+                        <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                        <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                        <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"></span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
 
         {/* Input Area */}
