@@ -70,39 +70,31 @@ interface Message {
   };
 }
 
-interface Session {
-  id: string;
-  subject: string;
-  title: string;
-  messages: Message[];
-  timestamp: Date;
-}
-
 // --- Components ---
 
 export default function App() {
-  const [sessions, setSessions] = useState<Session[]>(() => {
-    const saved = localStorage.getItem('coach_barreau_sessions');
+  const [histories, setHistories] = useState<Record<string, Message[]>>(() => {
+    const saved = localStorage.getItem('coach_barreau_histories');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        return parsed.map((s: any) => ({
-          ...s,
-          timestamp: new Date(s.timestamp),
-          messages: s.messages.map((m: any) => ({
-            ...m,
-            timestamp: new Date(m.timestamp)
-          }))
-        }));
+        // Convert string timestamps back to Date objects
+        Object.keys(parsed).forEach(key => {
+          parsed[key] = parsed[key].map((msg: any) => ({
+            ...msg,
+            timestamp: new Date(msg.timestamp)
+          }));
+        });
+        return parsed;
       } catch (e) {
-        return [];
+        return {};
       }
     }
-    return [];
+    return {};
   });
 
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeSubject, setActiveSubject] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isTtsEnabled, setIsTtsEnabled] = useState(true);
@@ -117,37 +109,32 @@ export default function App() {
   const recognitionRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Derived state
-  const activeSession = sessions.find(s => s.id === activeSessionId);
-  const messages = activeSession?.messages || [];
-
   // Initialize Gemini
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
   const chatRef = useRef<any>(null);
 
-  // Save sessions to localStorage whenever they change
+  // Save histories to localStorage whenever they change
   useEffect(() => {
-    localStorage.setItem('coach_barreau_sessions', JSON.stringify(sessions));
-  }, [sessions]);
+    localStorage.setItem('coach_barreau_histories', JSON.stringify(histories));
+  }, [histories]);
 
-  // Load chat session when activeSessionId changes
+  // Load messages when activeSubject changes
   useEffect(() => {
-    if (activeSessionId) {
-      const session = sessions.find(s => s.id === activeSessionId);
-      if (session) {
-        chatRef.current = ai.chats.create({
-          model: "gemini-3-flash-preview",
-          config: {
-            systemInstruction: `${SYSTEM_INSTRUCTION}\n\nLe sujet actuel de révision est : ${session.subject}. Concentre-toi sur cette matière.`,
-          },
-          history: session.messages.map(m => ({
-            role: m.role,
-            parts: [{ text: m.content }]
-          }))
-        });
-      }
+    if (activeSubject) {
+      setMessages(histories[activeSubject] || []);
+      // Reset chat session when switching subjects to keep context clean per subject
+      chatRef.current = ai.chats.create({
+        model: "gemini-3-flash-preview",
+        config: {
+          systemInstruction: `${SYSTEM_INSTRUCTION}\n\nLe sujet actuel de révision est : ${activeSubject}. Concentre-toi sur cette matière.`,
+        },
+        history: (histories[activeSubject] || []).map(m => ({
+          role: m.role,
+          parts: [{ text: m.content }]
+        }))
+      });
     }
-  }, [activeSessionId]);
+  }, [activeSubject]);
 
   useEffect(() => {
     if (!chatRef.current) {
@@ -199,14 +186,18 @@ export default function App() {
   };
 
   const handleInitialGreeting = async () => {
-    if (messages.length > 0) return;
+    if (messages.length > 0) return; // Don't greet if history exists
     setIsTyping(true);
     try {
       const response = await chatRef.current.sendMessage({ message: "Bonjour Coach, je suis prête pour ma session de révision." });
       const text = response.text;
       const newMessage: Message = { role: 'model', content: text, timestamp: new Date() };
       
-      updateActiveSession([newMessage]);
+      const newMessages = [newMessage];
+      setMessages(newMessages);
+      if (activeSubject) {
+        setHistories(prev => ({ ...prev, [activeSubject]: newMessages }));
+      }
       
       if (isTtsEnabled) generateSpeech(text);
     } catch (error) {
@@ -214,15 +205,6 @@ export default function App() {
     } finally {
       setIsTyping(false);
     }
-  };
-
-  const updateActiveSession = (newMessages: Message[]) => {
-    if (!activeSessionId) return;
-    setSessions(prev => prev.map(s => 
-      s.id === activeSessionId 
-        ? { ...s, messages: newMessages, timestamp: new Date() } 
-        : s
-    ));
   };
 
   const generateSpeech = async (text: string) => {
@@ -273,11 +255,14 @@ export default function App() {
   };
 
   const handleSendFromVoice = async (text: string) => {
-    if (!text.trim() || isTyping || !activeSessionId) return;
+    if (!text.trim() || isTyping) return;
     
     const userMessage: Message = { role: 'user', content: text, timestamp: new Date() };
     const updatedMessages = [...messages, userMessage];
-    updateActiveSession(updatedMessages);
+    setMessages(updatedMessages);
+    if (activeSubject) {
+      setHistories(prev => ({ ...prev, [activeSubject]: updatedMessages }));
+    }
     
     setInput('');
     setIsTyping(true);
@@ -288,7 +273,10 @@ export default function App() {
       const modelMessage: Message = { role: 'model', content: responseText, timestamp: new Date() };
       
       const finalMessages = [...updatedMessages, modelMessage];
-      updateActiveSession(finalMessages);
+      setMessages(finalMessages);
+      if (activeSubject) {
+        setHistories(prev => ({ ...prev, [activeSubject]: finalMessages }));
+      }
       
       if (isTtsEnabled) generateSpeech(responseText);
     } catch (error) {
@@ -300,7 +288,7 @@ export default function App() {
 
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (((!input.trim() && !selectedFile) || isTyping) || !activeSessionId) return;
+    if ((!input.trim() && !selectedFile) || isTyping) return;
 
     const userMessage: Message = { 
       role: 'user', 
@@ -314,7 +302,10 @@ export default function App() {
     };
 
     const updatedWithUser = [...messages, userMessage];
-    updateActiveSession(updatedWithUser);
+    setMessages(updatedWithUser);
+    if (activeSubject) {
+      setHistories(prev => ({ ...prev, [activeSubject]: updatedWithUser }));
+    }
 
     const currentInput = input;
     const currentFile = selectedFile;
@@ -343,7 +334,10 @@ export default function App() {
       const modelMessage: Message = { role: 'model', content: text, timestamp: new Date() };
       
       const finalMessages = [...updatedWithUser, modelMessage];
-      updateActiveSession(finalMessages);
+      setMessages(finalMessages);
+      if (activeSubject) {
+        setHistories(prev => ({ ...prev, [activeSubject]: finalMessages }));
+      }
       
       if (isTtsEnabled) generateSpeech(text);
     } catch (error) {
@@ -354,7 +348,10 @@ export default function App() {
         timestamp: new Date() 
       };
       const finalWithErr = [...updatedWithUser, errorMessage];
-      updateActiveSession(finalWithErr);
+      setMessages(finalWithErr);
+      if (activeSubject) {
+        setHistories(prev => ({ ...prev, [activeSubject]: finalWithErr }));
+      }
     } finally {
       setIsTyping(false);
     }
@@ -374,65 +371,38 @@ export default function App() {
     }
   };
 
-  const printHistory = () => {
-    window.print();
-  };
-
-  const startNewSession = (subject: string) => {
-    const newSession: Session = {
-      id: Math.random().toString(36).substring(2, 15),
-      subject,
-      title: `${subject} - ${new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
-      messages: [],
-      timestamp: new Date()
-    };
-    setSessions(prev => [newSession, ...prev]);
-    setActiveSessionId(newSession.id);
-    setActiveSubject(subject);
-    setIsSidebarOpen(false);
-    
-    // Trigger initial greeting for the new session
-    setTimeout(() => {
-      handleInitialGreeting();
-    }, 100);
-  };
-
-  const loadSession = (sessionId: string) => {
-    const session = sessions.find(s => s.id === sessionId);
-    if (session) {
-      setActiveSessionId(sessionId);
-      setActiveSubject(session.subject);
-      setIsSidebarOpen(false);
-    }
-  };
-
   const clearHistory = () => {
-    if (activeSessionId) {
-      setSessions(prev => prev.filter(s => s.id !== activeSessionId));
-      setActiveSessionId(null);
-      setActiveSubject(null);
+    if (activeSubject) {
+      const newHistories = { ...histories };
+      delete newHistories[activeSubject];
+      setHistories(newHistories);
+      setMessages([]);
       // Re-initialize chat
       chatRef.current = ai.chats.create({
         model: "gemini-3-flash-preview",
         config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
+          systemInstruction: `${SYSTEM_INSTRUCTION}\n\nLe sujet actuel de révision est : ${activeSubject}. Concentre-toi sur cette matière.`,
         },
       });
     }
   };
 
   const selectSubject = (subjectName: string) => {
-    // Check if there's an existing session for this subject
-    const existingSession = sessions.find(s => s.subject === subjectName);
-    if (existingSession) {
-      loadSession(existingSession.id);
-    } else {
-      startNewSession(subjectName);
+    setActiveSubject(subjectName);
+    setIsSidebarOpen(false); // Close sidebar on mobile
+    
+    // If no history for this subject, send a trigger message
+    if (!histories[subjectName] || histories[subjectName].length === 0) {
+      setInput(`Je souhaite réviser le sujet suivant : ${subjectName}`);
+      setTimeout(() => {
+        const btn = document.getElementById('send-button');
+        btn?.click();
+      }, 100);
     }
   };
 
   return (
-    <div className="flex h-[100dvh] bg-[#f8f9fa] overflow-hidden safe-top safe-bottom">
+    <div className="flex h-screen bg-[#f8f9fa] overflow-hidden">
       {/* Sidebar - Right Block for Subjects and Info */}
       <aside className={cn(
         "fixed inset-y-0 right-0 z-40 w-[300px] sm:w-[380px] bg-slate-900 text-white flex flex-col border-l border-slate-800 transition-transform duration-300 lg:relative lg:translate-x-0 order-2",
@@ -469,111 +439,51 @@ export default function App() {
               <BookOpen size={12} className="text-indigo-500" /> Matières à réviser
             </h2>
             <div className="space-y-2">
-              {SUBJECTS.map((sub) => {
-                const subjectSessions = sessions.filter(s => s.subject === sub.name);
-                return (
-                  <button
-                    key={sub.id}
-                    onClick={() => selectSubject(sub.name)}
-                    className={cn(
-                      "w-full flex items-center gap-3 p-3 rounded-xl transition-all text-left border group",
-                      activeSubject === sub.name 
-                        ? "bg-indigo-600 border-indigo-500 shadow-md shadow-indigo-500/10" 
-                        : "bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600"
-                    )}
-                  >
-                    <div className={cn(
-                      "p-2 rounded-lg transition-colors",
-                      activeSubject === sub.name ? "bg-white/20 text-white" : cn("bg-slate-900", sub.color)
+              {SUBJECTS.map((sub) => (
+                <button
+                  key={sub.id}
+                  onClick={() => selectSubject(sub.name)}
+                  className={cn(
+                    "w-full flex items-center gap-3 p-3 rounded-xl transition-all text-left border group",
+                    activeSubject === sub.name 
+                      ? "bg-indigo-600 border-indigo-500 shadow-md shadow-indigo-500/10" 
+                      : "bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600"
+                  )}
+                >
+                  <div className={cn(
+                    "p-2 rounded-lg transition-colors",
+                    activeSubject === sub.name ? "bg-white/20 text-white" : cn("bg-slate-900", sub.color)
+                  )}>
+                    <sub.icon size={16} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <span className={cn(
+                      "text-xs font-semibold leading-tight block truncate",
+                      activeSubject === sub.name ? "text-white" : "text-slate-300 group-hover:text-white"
                     )}>
-                      <sub.icon size={16} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <span className={cn(
-                        "text-xs font-semibold leading-tight block truncate",
-                        activeSubject === sub.name ? "text-white" : "text-slate-300 group-hover:text-white"
-                      )}>
-                        {sub.name}
+                      {sub.name}
+                    </span>
+                    {histories[sub.name] && histories[sub.name].length > 0 && (
+                      <span className="text-[9px] text-indigo-300/60 font-medium">
+                        {histories[sub.name].length} messages sauvegardés
                       </span>
-                      {subjectSessions.length > 0 && (
-                        <span className="text-[9px] text-indigo-300/60 font-medium">
-                          {subjectSessions.length} session(s) active(s)
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
+                    )}
+                  </div>
+                </button>
+              ))}
             </div>
           </section>
 
-          {sessions.length > 0 && (
-            <section>
-              <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-                <RefreshCw size={12} className="text-indigo-500" /> Historique des Sauvegardes
-              </h2>
-              <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
-                {sessions.map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => loadSession(s.id)}
-                    className={cn(
-                      "w-full flex flex-col p-2.5 rounded-lg transition-all text-left border text-[10px]",
-                      activeSessionId === s.id
-                        ? "bg-indigo-600/20 border-indigo-500/30 text-white"
-                        : "bg-slate-800/20 border-slate-700/30 text-slate-400 hover:bg-slate-800/40"
-                    )}
-                  >
-                    <span className="font-bold truncate w-full">{s.title}</span>
-                    <span className="opacity-50">{s.messages.length} messages</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {activeSubject && (
-            <section className="pt-4 border-t border-slate-800 space-y-2">
-              <button
-                onClick={() => startNewSession(activeSubject)}
-                className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 transition-all text-[10px] font-bold uppercase tracking-wider"
-              >
-                <RefreshCw size={14} /> Nouvelle Session
-              </button>
-              <button
-                onClick={printHistory}
-                className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-all text-[10px] font-bold uppercase tracking-wider"
-              >
-                <FileText size={14} /> Exporter en PDF
-              </button>
+          {activeSubject && histories[activeSubject] && histories[activeSubject].length > 0 && (
+            <section className="pt-4 border-t border-slate-800">
               <button
                 onClick={clearHistory}
                 className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-all text-[10px] font-bold uppercase tracking-wider"
               >
-                <Trash2 size={14} /> Supprimer cette session
+                <Trash2 size={14} /> Effacer l'historique
               </button>
             </section>
           )}
-
-          <section className="bg-indigo-600/5 rounded-2xl p-4 border border-indigo-500/10">
-            <h3 className="text-xs font-bold text-indigo-400 mb-2 flex items-center gap-2">
-              <RefreshCw size={14} className="animate-spin-slow" /> Compte à rebours
-            </h3>
-            <div className="flex justify-between text-center">
-              <div>
-                <p className="text-lg font-bold text-white">
-                  {Math.max(0, Math.floor((new Date('2026-04-18').getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)))}
-                </p>
-                <p className="text-[8px] text-slate-500 uppercase font-bold">Jours</p>
-              </div>
-              <div className="w-px h-8 bg-slate-800 self-center" />
-              <div className="flex-1 px-2">
-                <p className="text-[10px] text-slate-400 font-medium leading-tight">
-                  Avant le grand jour (18 Avril 2026)
-                </p>
-              </div>
-            </div>
-          </section>
 
           <section className="bg-indigo-600/5 rounded-2xl p-4 border border-indigo-500/10">
             <h3 className="text-xs font-bold text-indigo-400 mb-2 flex items-center gap-2">
