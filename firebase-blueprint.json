@@ -1,25 +1,41 @@
 {
   "entities": {
-    "users": {
-      "title": "User Profile",
-      "description": "Stores user trial and premium status",
+    "discussion": {
+      "title": "Discussion",
+      "description": "A chat session history for a specific subject.",
       "type": "object",
       "properties": {
-        "uid": { "type": "string" },
-        "email": { "type": "string", "format": "email" },
-        "displayName": { "type": "string" },
-        "photoURL": { "type": "string" },
-        "firstLoginAt": { "type": "string", "format": "date-time", "description": "Timestamp of the very first login" },
-        "isPremium": { "type": "boolean", "description": "Whether the user has paid for full access" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "uid": { "type": "string", "description": "The user ID who owns this discussion." },
+        "subjectId": { "type": "string", "description": "The ID of the subject (e.g., 'famille')." },
+        "subjectName": { "type": "string", "description": "The display name of the subject." },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": { "type": "string", "enum": ["user", "model"] },
+              "content": { "type": "string" },
+              "timestamp": { "type": "string", "format": "date-time" },
+              "attachment": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "type": { "type": "string" },
+                  "data": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["uid", "email", "firstLoginAt", "isPremium"]
+      "required": ["uid", "subjectId", "messages", "updatedAt"]
     }
   },
   "firestore": {
-    "/users/{userId}": {
-      "schema": "users",
-      "description": "Individual user profiles"
+    "/discussions/{discussionId}": {
+      "schema": "discussion",
+      "description": "User chat histories."
     }
   }
 }
