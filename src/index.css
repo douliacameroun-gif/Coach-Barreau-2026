@@ -9,7 +9,7 @@
 
 @layer base {
   body {
-    @apply bg-stone-100 text-stone-900 font-sans;
+    @apply bg-[#f8f9fa] text-slate-900 font-sans;
   }
 }
 

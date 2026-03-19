@@ -20,37 +20,11 @@ import {
   X,
   File,
   Menu,
-  Trash2,
-  History,
-  LogIn,
-  LogOut,
-  ChevronRight
+  Trash2
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { 
-  auth, 
-  db, 
-  googleProvider, 
-  signInWithPopup, 
-  onAuthStateChanged, 
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  setDoc, 
-  updateDoc, 
-  deleteDoc, 
-  query, 
-  where, 
-  orderBy, 
-  onSnapshot, 
-  Timestamp,
-  User as FirebaseUser,
-  handleFirestoreError,
-  OperationType
-} from './firebase';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -65,7 +39,6 @@ const SUBJECTS = [
   { id: 'execution', name: "Voies d'exécution", icon: Gavel, color: 'text-amber-600' },
   { id: 'social', name: 'Droit social', icon: FileText, color: 'text-emerald-600' },
   { id: 'administratif', name: 'Droit administratif', icon: Building2, color: 'text-purple-600' },
-  { id: 'methodologie', name: 'Méthodologie juridique', icon: BookOpen, color: 'text-pink-600' },
 ];
 
 const SYSTEM_INSTRUCTION = `Tu es le "Coach Barreau 2026", un assistant juridique expert en droit camerounais, dévoué à la préparation de Christiane Endalle pour l'examen du barreau de la session 2026.
@@ -79,7 +52,7 @@ RÈGLES DE FORMATAGE "VOICE-READY" ET "CLEAN-DISPLAY" (STRICTES) :
 ❻ Simplicité Vocale : Fais des paragraphes très courts et aérés. Chaque phrase doit être simple, directe et courte. Saute des lignes entre chaque idée.
 
 Mission :
-❶ Évaluation : Pose des questions de cours ou des mini-cas pratiques sur les 7 matières exigées.
+❶ Évaluation : Pose des questions de cours ou des mini-cas pratiques sur les 6 matières exigées.
 ❷ Correction : Attends la réponse de Christiane avant de donner la solution. Cite les articles de loi camerounais.
 ❸ Analyse : Analyse les documents téléchargés en respectant ces règles.
 ❹ Langue : Français exclusivement.
@@ -97,13 +70,39 @@ interface Message {
   };
 }
 
+interface Session {
+  id: string;
+  subject: string;
+  title: string;
+  messages: Message[];
+  timestamp: Date;
+}
+
 // --- Components ---
 
 export default function App() {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [histories, setHistories] = useState<Record<string, Message[]>>({});
+  const [sessions, setSessions] = useState<Session[]>(() => {
+    const saved = localStorage.getItem('coach_barreau_sessions');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return parsed.map((s: any) => ({
+          ...s,
+          timestamp: new Date(s.timestamp),
+          messages: s.messages.map((m: any) => ({
+            ...m,
+            timestamp: new Date(m.timestamp)
+          }))
+        }));
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
+  });
+
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [activeSubject, setActiveSubject] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isTtsEnabled, setIsTtsEnabled] = useState(true);
@@ -112,97 +111,43 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<{ file: File; base64: string } | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'subjects' | 'history'>('subjects');
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const recognitionRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Derived state
+  const activeSession = sessions.find(s => s.id === activeSessionId);
+  const messages = activeSession?.messages || [];
+
   // Initialize Gemini
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
   const chatRef = useRef<any>(null);
 
-  // Firebase Auth
+  // Save sessions to localStorage whenever they change
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-    });
-    return () => unsubscribe();
-  }, []);
+    localStorage.setItem('coach_barreau_sessions', JSON.stringify(sessions));
+  }, [sessions]);
 
-  // Sync with Firestore
+  // Load chat session when activeSessionId changes
   useEffect(() => {
-    if (!user) {
-      setHistories({});
-      return;
+    if (activeSessionId) {
+      const session = sessions.find(s => s.id === activeSessionId);
+      if (session) {
+        chatRef.current = ai.chats.create({
+          model: "gemini-3-flash-preview",
+          config: {
+            systemInstruction: `${SYSTEM_INSTRUCTION}\n\nLe sujet actuel de révision est : ${session.subject}. Concentre-toi sur cette matière.`,
+          },
+          history: session.messages.map(m => ({
+            role: m.role,
+            parts: [{ text: m.content }]
+          }))
+        });
+      }
     }
-
-    const q = query(
-      collection(db, 'discussions'),
-      where('uid', '==', user.uid),
-      orderBy('updatedAt', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const newHistories: Record<string, Message[]> = {};
-      snapshot.docs.forEach(doc => {
-        const data = doc.data();
-        newHistories[data.subjectName] = data.messages.map((m: any) => ({
-          ...m,
-          timestamp: m.timestamp instanceof Timestamp ? m.timestamp.toDate() : new Date(m.timestamp)
-        }));
-      });
-      setHistories(newHistories);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'discussions');
-    });
-
-    return () => unsubscribe();
-  }, [user]);
-
-  // Load messages when activeSubject changes
-  useEffect(() => {
-    if (activeSubject) {
-      const subjectMessages = histories[activeSubject] || [];
-      setMessages(subjectMessages);
-      
-      chatRef.current = ai.chats.create({
-        model: "gemini-3-flash-preview",
-        config: {
-          systemInstruction: `${SYSTEM_INSTRUCTION}\n\nLe sujet actuel de révision est : ${activeSubject}. Concentre-toi sur cette matière.`,
-        },
-        history: subjectMessages.map(m => ({
-          role: m.role,
-          parts: [{ text: m.content }]
-        }))
-      });
-    }
-  }, [activeSubject, histories]);
-
-  const saveToFirestore = async (newMessages: Message[]) => {
-    if (!user || !activeSubject) return;
-
-    const subjectId = SUBJECTS.find(s => s.name === activeSubject)?.id || 'unknown';
-    const docId = `${user.uid}_${subjectId}`;
-
-    try {
-      await setDoc(doc(db, 'discussions', docId), {
-        uid: user.uid,
-        subjectId,
-        subjectName: activeSubject,
-        messages: newMessages.map(m => ({
-          role: m.role,
-          content: m.content,
-          timestamp: m.timestamp.toISOString(),
-          attachment: m.attachment || null
-        })),
-        updatedAt: Timestamp.now()
-      });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `discussions/${docId}`);
-    }
-  };
+  }, [activeSessionId]);
 
   useEffect(() => {
     if (!chatRef.current) {
@@ -254,18 +199,14 @@ export default function App() {
   };
 
   const handleInitialGreeting = async () => {
-    if (messages.length > 0) return; // Don't greet if history exists
+    if (messages.length > 0) return;
     setIsTyping(true);
     try {
       const response = await chatRef.current.sendMessage({ message: "Bonjour Coach, je suis prête pour ma session de révision." });
       const text = response.text;
       const newMessage: Message = { role: 'model', content: text, timestamp: new Date() };
       
-      const newMessages = [newMessage];
-      setMessages(newMessages);
-      if (activeSubject) {
-        saveToFirestore(newMessages);
-      }
+      updateActiveSession([newMessage]);
       
       if (isTtsEnabled) generateSpeech(text);
     } catch (error) {
@@ -273,6 +214,15 @@ export default function App() {
     } finally {
       setIsTyping(false);
     }
+  };
+
+  const updateActiveSession = (newMessages: Message[]) => {
+    if (!activeSessionId) return;
+    setSessions(prev => prev.map(s => 
+      s.id === activeSessionId 
+        ? { ...s, messages: newMessages, timestamp: new Date() } 
+        : s
+    ));
   };
 
   const generateSpeech = async (text: string) => {
@@ -323,14 +273,11 @@ export default function App() {
   };
 
   const handleSendFromVoice = async (text: string) => {
-    if (!text.trim() || isTyping) return;
+    if (!text.trim() || isTyping || !activeSessionId) return;
     
     const userMessage: Message = { role: 'user', content: text, timestamp: new Date() };
     const updatedMessages = [...messages, userMessage];
-    setMessages(updatedMessages);
-    if (activeSubject) {
-      saveToFirestore(updatedMessages);
-    }
+    updateActiveSession(updatedMessages);
     
     setInput('');
     setIsTyping(true);
@@ -341,10 +288,7 @@ export default function App() {
       const modelMessage: Message = { role: 'model', content: responseText, timestamp: new Date() };
       
       const finalMessages = [...updatedMessages, modelMessage];
-      setMessages(finalMessages);
-      if (activeSubject) {
-        setHistories(prev => ({ ...prev, [activeSubject]: finalMessages }));
-      }
+      updateActiveSession(finalMessages);
       
       if (isTtsEnabled) generateSpeech(responseText);
     } catch (error) {
@@ -356,7 +300,7 @@ export default function App() {
 
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if ((!input.trim() && !selectedFile) || isTyping) return;
+    if (((!input.trim() && !selectedFile) || isTyping) || !activeSessionId) return;
 
     const userMessage: Message = { 
       role: 'user', 
@@ -370,10 +314,7 @@ export default function App() {
     };
 
     const updatedWithUser = [...messages, userMessage];
-    setMessages(updatedWithUser);
-    if (activeSubject) {
-      saveToFirestore(updatedWithUser);
-    }
+    updateActiveSession(updatedWithUser);
 
     const currentInput = input;
     const currentFile = selectedFile;
@@ -402,10 +343,7 @@ export default function App() {
       const modelMessage: Message = { role: 'model', content: text, timestamp: new Date() };
       
       const finalMessages = [...updatedWithUser, modelMessage];
-      setMessages(finalMessages);
-      if (activeSubject) {
-        saveToFirestore(finalMessages);
-      }
+      updateActiveSession(finalMessages);
       
       if (isTtsEnabled) generateSpeech(text);
     } catch (error) {
@@ -416,10 +354,7 @@ export default function App() {
         timestamp: new Date() 
       };
       const finalWithErr = [...updatedWithUser, errorMessage];
-      setMessages(finalWithErr);
-      if (activeSubject) {
-        saveToFirestore(finalWithErr);
-      }
+      updateActiveSession(finalWithErr);
     } finally {
       setIsTyping(false);
     }
@@ -439,60 +374,65 @@ export default function App() {
     }
   };
 
-  const clearHistory = async () => {
-    if (activeSubject && user) {
-      const subjectId = SUBJECTS.find(s => s.name === activeSubject)?.id || 'unknown';
-      const docId = `${user.uid}_${subjectId}`;
-      try {
-        await deleteDoc(doc(db, 'discussions', docId));
-        setMessages([]);
-        chatRef.current = ai.chats.create({
-          model: "gemini-3-flash-preview",
-          config: {
-            systemInstruction: `${SYSTEM_INSTRUCTION}\n\nLe sujet actuel de révision est : ${activeSubject}. Concentre-toi sur cette matière.`,
-          },
-        });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `discussions/${docId}`);
-      }
+  const printHistory = () => {
+    window.print();
+  };
+
+  const startNewSession = (subject: string) => {
+    const newSession: Session = {
+      id: Math.random().toString(36).substring(2, 15),
+      subject,
+      title: `${subject} - ${new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
+      messages: [],
+      timestamp: new Date()
+    };
+    setSessions(prev => [newSession, ...prev]);
+    setActiveSessionId(newSession.id);
+    setActiveSubject(subject);
+    setIsSidebarOpen(false);
+    
+    // Trigger initial greeting for the new session
+    setTimeout(() => {
+      handleInitialGreeting();
+    }, 100);
+  };
+
+  const loadSession = (sessionId: string) => {
+    const session = sessions.find(s => s.id === sessionId);
+    if (session) {
+      setActiveSessionId(sessionId);
+      setActiveSubject(session.subject);
+      setIsSidebarOpen(false);
+    }
+  };
+
+  const clearHistory = () => {
+    if (activeSessionId) {
+      setSessions(prev => prev.filter(s => s.id !== activeSessionId));
+      setActiveSessionId(null);
+      setActiveSubject(null);
+      // Re-initialize chat
+      chatRef.current = ai.chats.create({
+        model: "gemini-3-flash-preview",
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION,
+        },
+      });
     }
   };
 
   const selectSubject = (subjectName: string) => {
-    setActiveSubject(subjectName);
-    setIsSidebarOpen(false); // Close sidebar on mobile
-    
-    // If no history for this subject, send a trigger message
-    if (!histories[subjectName] || histories[subjectName].length === 0) {
-      setInput(`Je souhaite réviser le sujet suivant : ${subjectName}`);
-      setTimeout(() => {
-        const btn = document.getElementById('send-button');
-        btn?.click();
-      }, 100);
-    }
-  };
-
-  const login = async () => {
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error("Login error:", error);
-    }
-  };
-
-  const logout = async () => {
-    try {
-      await auth.signOut();
-      setIsStarted(false);
-      setActiveSubject(null);
-      setMessages([]);
-    } catch (error) {
-      console.error("Logout error:", error);
+    // Check if there's an existing session for this subject
+    const existingSession = sessions.find(s => s.subject === subjectName);
+    if (existingSession) {
+      loadSession(existingSession.id);
+    } else {
+      startNewSession(subjectName);
     }
   };
 
   return (
-    <div className="flex h-screen bg-[#f8f9fa] overflow-hidden">
+    <div className="flex h-[100dvh] bg-[#f8f9fa] overflow-hidden safe-top safe-bottom">
       {/* Sidebar - Right Block for Subjects and Info */}
       <aside className={cn(
         "fixed inset-y-0 right-0 z-40 w-[300px] sm:w-[380px] bg-slate-900 text-white flex flex-col border-l border-slate-800 transition-transform duration-300 lg:relative lg:translate-x-0 order-2",
@@ -517,59 +457,21 @@ export default function App() {
         </div>
 
         <div className="p-4 border-b border-slate-800">
-          {user ? (
-            <div className="flex items-center justify-between bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
-              <div className="flex items-center gap-3">
-                <img src={user.photoURL || ''} alt="" className="w-8 h-8 rounded-full border border-slate-600" />
-                <div>
-                  <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Candidate</p>
-                  <p className="text-sm font-semibold text-white truncate max-w-[150px]">{user.displayName || 'Christiane'}</p>
-                </div>
-              </div>
-              <button onClick={logout} className="p-2 text-slate-400 hover:text-red-400 transition-colors">
-                <LogOut size={16} />
-              </button>
-            </div>
-          ) : (
-            <button 
-              onClick={login}
-              className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 transition-all font-bold text-xs uppercase tracking-wider"
-            >
-              <LogIn size={16} /> Se connecter
-            </button>
-          )}
-        </div>
-
-        {/* Tabs for Navigation */}
-        <div className="flex border-b border-slate-800">
-          <button 
-            onClick={() => setActiveTab('subjects')}
-            className={cn(
-              "flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-all",
-              activeTab === 'subjects' ? "text-indigo-400 border-b-2 border-indigo-500 bg-indigo-500/5" : "text-slate-500 hover:text-slate-300"
-            )}
-          >
-            Matières
-          </button>
-          <button 
-            onClick={() => setActiveTab('history')}
-            className={cn(
-              "flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-all",
-              activeTab === 'history' ? "text-indigo-400 border-b-2 border-indigo-500 bg-indigo-500/5" : "text-slate-500 hover:text-slate-300"
-            )}
-          >
-            Historique
-          </button>
+          <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50">
+            <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Candidate</p>
+            <p className="text-sm font-semibold text-white">Christiane Endalle</p>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
-          {activeTab === 'subjects' ? (
-            <section>
-              <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-                <BookOpen size={12} className="text-indigo-500" /> Matières à réviser
-              </h2>
-              <div className="space-y-2">
-                {SUBJECTS.map((sub) => (
+          <section>
+            <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+              <BookOpen size={12} className="text-indigo-500" /> Matières à réviser
+            </h2>
+            <div className="space-y-2">
+              {SUBJECTS.map((sub) => {
+                const subjectSessions = sessions.filter(s => s.subject === sub.name);
+                return (
                   <button
                     key={sub.id}
                     onClick={() => selectSubject(sub.name)}
@@ -593,66 +495,85 @@ export default function App() {
                       )}>
                         {sub.name}
                       </span>
-                      {histories[sub.name] && histories[sub.name].length > 0 && (
+                      {subjectSessions.length > 0 && (
                         <span className="text-[9px] text-indigo-300/60 font-medium">
-                          {histories[sub.name].length} messages sauvegardés
+                          {subjectSessions.length} session(s) active(s)
                         </span>
                       )}
                     </div>
                   </button>
-                ))}
-              </div>
-            </section>
-          ) : (
+                );
+              })}
+            </div>
+          </section>
+
+          {sessions.length > 0 && (
             <section>
               <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-                <History size={12} className="text-indigo-500" /> Sessions sauvegardées
+                <RefreshCw size={12} className="text-indigo-500" /> Historique des Sauvegardes
               </h2>
-              <div className="space-y-2">
-                {Object.keys(histories).length > 0 ? (
-                  Object.entries(histories).map(([name, msgs]) => (
-                    <button
-                      key={name}
-                      onClick={() => selectSubject(name)}
-                      className={cn(
-                        "w-full flex items-center justify-between p-3 rounded-xl transition-all text-left border group",
-                        activeSubject === name 
-                          ? "bg-indigo-600 border-indigo-500" 
-                          : "bg-slate-800/40 border-slate-700/50 hover:bg-slate-800"
-                      )}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="p-2 rounded-lg bg-slate-900 text-indigo-400">
-                          <FileText size={14} />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-slate-200 truncate">{name}</p>
-                          <p className="text-[9px] text-slate-500">{msgs.length} messages</p>
-                        </div>
-                      </div>
-                      <ChevronRight size={14} className="text-slate-600 group-hover:text-indigo-400" />
-                    </button>
-                  ))
-                ) : (
-                  <div className="text-center py-10 px-4">
-                    <History size={32} className="text-slate-800 mx-auto mb-3" />
-                    <p className="text-xs text-slate-500">Aucun historique disponible pour le moment.</p>
-                  </div>
-                )}
+              <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
+                {sessions.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => loadSession(s.id)}
+                    className={cn(
+                      "w-full flex flex-col p-2.5 rounded-lg transition-all text-left border text-[10px]",
+                      activeSessionId === s.id
+                        ? "bg-indigo-600/20 border-indigo-500/30 text-white"
+                        : "bg-slate-800/20 border-slate-700/30 text-slate-400 hover:bg-slate-800/40"
+                    )}
+                  >
+                    <span className="font-bold truncate w-full">{s.title}</span>
+                    <span className="opacity-50">{s.messages.length} messages</span>
+                  </button>
+                ))}
               </div>
             </section>
           )}
 
-          {activeSubject && histories[activeSubject] && histories[activeSubject].length > 0 && (
-            <section className="pt-4 border-t border-slate-800">
+          {activeSubject && (
+            <section className="pt-4 border-t border-slate-800 space-y-2">
+              <button
+                onClick={() => startNewSession(activeSubject)}
+                className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 transition-all text-[10px] font-bold uppercase tracking-wider"
+              >
+                <RefreshCw size={14} /> Nouvelle Session
+              </button>
+              <button
+                onClick={printHistory}
+                className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-all text-[10px] font-bold uppercase tracking-wider"
+              >
+                <FileText size={14} /> Exporter en PDF
+              </button>
               <button
                 onClick={clearHistory}
                 className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-all text-[10px] font-bold uppercase tracking-wider"
               >
-                <Trash2 size={14} /> Effacer l'historique
+                <Trash2 size={14} /> Supprimer cette session
               </button>
             </section>
           )}
+
+          <section className="bg-indigo-600/5 rounded-2xl p-4 border border-indigo-500/10">
+            <h3 className="text-xs font-bold text-indigo-400 mb-2 flex items-center gap-2">
+              <RefreshCw size={14} className="animate-spin-slow" /> Compte à rebours
+            </h3>
+            <div className="flex justify-between text-center">
+              <div>
+                <p className="text-lg font-bold text-white">
+                  {Math.max(0, Math.floor((new Date('2026-04-18').getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)))}
+                </p>
+                <p className="text-[8px] text-slate-500 uppercase font-bold">Jours</p>
+              </div>
+              <div className="w-px h-8 bg-slate-800 self-center" />
+              <div className="flex-1 px-2">
+                <p className="text-[10px] text-slate-400 font-medium leading-tight">
+                  Avant le grand jour (18 Avril 2026)
+                </p>
+              </div>
+            </div>
+          </section>
 
           <section className="bg-indigo-600/5 rounded-2xl p-4 border border-indigo-500/10">
             <h3 className="text-xs font-bold text-indigo-400 mb-2 flex items-center gap-2">
