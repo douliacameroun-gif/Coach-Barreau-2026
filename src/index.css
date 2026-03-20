@@ -9,7 +9,7 @@
 
 @layer base {
   body {
-    @apply bg-[#f8f9fa] text-slate-900 font-sans;
+    @apply bg-stone-100 text-stone-900 font-sans;
   }
 }
 
@@ -23,4 +23,24 @@
 
 .markdown-body ul, .markdown-body ol {
   @apply mb-4 space-y-2;
+}
+
+@media print {
+  aside, header, .absolute, form, button {
+    display: none !important;
+  }
+  main {
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    position: static !important;
+  }
+  .flex-1 {
+    overflow: visible !important;
+    height: auto !important;
+  }
+  body, #root {
+    height: auto !important;
+    overflow: visible !important;
+  }
 }
