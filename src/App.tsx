@@ -22,7 +22,9 @@ import {
   History,
   LogOut,
   LogIn,
-  PlusCircle
+  PlusCircle,
+  Menu,
+  ChevronLeft
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
@@ -109,6 +111,7 @@ export default function App() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [activeSubject, setActiveSubject] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
   const scrollRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -231,11 +234,8 @@ export default function App() {
 
       recognitionRef.current.onresult = (event: any) => {
         const transcript = event.results[0][0].transcript;
-        setInput(transcript);
+        setInput(prev => prev + (prev ? ' ' : '') + transcript);
         setIsListening(false);
-        setTimeout(() => {
-          handleSendFromVoice(transcript);
-        }, 500);
       };
 
       recognitionRef.current.onerror = (event: any) => {
@@ -424,6 +424,7 @@ export default function App() {
   const selectSubject = (subjectName: string) => {
     setActiveSubject(subjectName);
     setInput(`Je souhaite réviser le sujet suivant : ${subjectName}`);
+    setIsSidebarOpen(false);
     setTimeout(() => {
       const btn = document.getElementById('send-button');
       btn?.click();
@@ -431,20 +432,34 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen bg-[#f8f9fa]">
-      {/* Sidebar - Right Block for Subjects and Info */}
-      <aside className="w-[380px] bg-slate-900 text-white flex flex-col border-l border-slate-800 order-2">
-        <div className="p-6 border-b border-slate-800">
+    <div className="flex h-screen bg-[#f8f9fa] overflow-hidden">
+      {/* Sidebar - Subjects and Info */}
+      <aside className={cn(
+        "fixed inset-y-0 right-0 z-40 w-[320px] bg-slate-900 text-white flex flex-col border-l border-slate-800 transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 order-2",
+        isSidebarOpen ? "translate-x-0" : "translate-x-full"
+      )}>
+        <div className="p-4 lg:p-6 border-b border-slate-800">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                <Scale className="text-white w-5 h-5" />
+              <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20 overflow-hidden">
+                <img 
+                  src="https://i.postimg.cc/G2LvBGPN/generated_image_(1).png" 
+                  alt="Logo" 
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
               </div>
               <div>
                 <h1 className="text-lg font-bold tracking-tight">Coach Barreau</h1>
                 <p className="text-[9px] text-indigo-400 uppercase tracking-[0.2em] font-bold">Session 2026</p>
               </div>
             </div>
+            <button 
+              onClick={() => setIsSidebarOpen(false)}
+              className="lg:hidden p-2 text-slate-400 hover:text-white"
+            >
+              <ChevronLeft size={20} />
+            </button>
           </div>
 
           <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 flex items-center justify-between">
@@ -594,11 +609,37 @@ export default function App() {
       </aside>
 
       {/* Main Block - Chatbot and Discussion */}
-      <main className="flex-1 flex flex-col bg-white order-1 relative">
+      <main className="flex-1 flex flex-col bg-white order-1 relative overflow-hidden">
+        {/* Mobile Header */}
+        <header className="lg:hidden flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-white z-30">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm overflow-hidden border border-slate-100">
+              <img 
+                src="https://i.postimg.cc/G2LvBGPN/generated_image_(1).png" 
+                alt="Logo" 
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+            <span className="font-bold text-slate-900 text-sm">Coach Barreau</span>
+          </div>
+          <button 
+            onClick={() => setIsSidebarOpen(true)}
+            className="p-2 text-slate-600 hover:bg-slate-50 rounded-lg"
+          >
+            <Menu size={20} />
+          </button>
+        </header>
+
         {!isStarted && (
-          <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-xl shadow-indigo-500/30 mb-6 animate-bounce">
-              <Scale className="text-white w-8 h-8" />
+          <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center">
+            <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center shadow-2xl shadow-indigo-500/20 mb-6 animate-bounce overflow-hidden border border-slate-100">
+              <img 
+                src="https://i.postimg.cc/G2LvBGPN/generated_image_(1).png" 
+                alt="Logo" 
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
             </div>
             <h2 className="text-2xl font-bold text-slate-900 mb-3">
               Bienvenue Christiane
@@ -618,7 +659,7 @@ export default function App() {
         {/* Chat Area */}
         <div 
           ref={scrollRef}
-          className="flex-1 overflow-y-auto p-10 space-y-10 scroll-smooth"
+          className="flex-1 overflow-y-auto p-4 lg:p-10 space-y-6 lg:space-y-10 scroll-smooth"
         >
           {messages.map((msg, i) => (
             <div 
@@ -633,8 +674,8 @@ export default function App() {
                 msg.role === 'user' ? "flex-row-reverse" : "flex-row"
               )}>
                 <div className={cn(
-                  "w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center shadow-sm mt-0.5 overflow-hidden border border-slate-200",
-                  msg.role === 'user' ? "bg-slate-100" : "bg-indigo-600 shadow-lg shadow-indigo-500/20"
+                  "w-8 h-8 lg:w-10 lg:h-10 rounded-full flex-shrink-0 flex items-center justify-center shadow-sm mt-0.5 overflow-hidden border border-slate-200",
+                  msg.role === 'user' ? "bg-slate-100" : "bg-white shadow-lg shadow-indigo-500/10"
                 )}>
                   {msg.role === 'user' ? (
                     <img 
@@ -644,7 +685,12 @@ export default function App() {
                       referrerPolicy="no-referrer"
                     />
                   ) : (
-                    <Scale className="text-white w-5 h-5" />
+                    <img 
+                      src="https://i.postimg.cc/G2LvBGPN/generated_image_(1).png" 
+                      alt="Coach" 
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
                   )}
                 </div>
                 
@@ -683,11 +729,16 @@ export default function App() {
           
           {isTyping && (
             <div className="flex justify-start animate-in fade-in duration-300">
-              <div className="flex gap-6">
-                <div className="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                  <Loader2 className="text-white w-6 h-6 animate-spin" />
+              <div className="flex gap-4 lg:gap-6">
+                <div className="w-8 h-8 lg:w-10 lg:h-10 rounded-full bg-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20 overflow-hidden">
+                  <img 
+                    src="https://i.postimg.cc/G2LvBGPN/generated_image_(1).png" 
+                    alt="Logo" 
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
                 </div>
-                <div className="bg-indigo-50/50 border border-indigo-100 p-5 rounded-[2rem] rounded-tl-none flex items-center gap-2">
+                <div className="bg-indigo-50/50 border border-indigo-100 p-3 lg:p-5 rounded-2xl rounded-tl-none flex items-center gap-2">
                   <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
                   <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
                   <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"></span>
@@ -698,7 +749,7 @@ export default function App() {
         </div>
 
         {/* Input Area */}
-        <div className="p-6 bg-white border-t border-slate-100">
+        <div className="p-4 lg:p-6 bg-white border-t border-slate-100">
           {selectedFile && (
             <div className="mb-4 p-3 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-center justify-between animate-in slide-in-from-bottom-2">
               <div className="flex items-center gap-3">
@@ -706,7 +757,7 @@ export default function App() {
                   <File size={18} />
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-slate-700 truncate max-w-[250px]">{selectedFile.file.name}</p>
+                  <p className="text-sm font-bold text-slate-700 truncate max-w-[150px] lg:max-w-[250px]">{selectedFile.file.name}</p>
                   <p className="text-[10px] text-indigo-500 uppercase font-bold tracking-wider">Document prêt</p>
                 </div>
               </div>
@@ -719,7 +770,7 @@ export default function App() {
             </div>
           )}
           
-          <form onSubmit={handleSend} className="relative flex items-center gap-3">
+          <form onSubmit={handleSend} className="relative flex items-center gap-2 lg:gap-3">
             <input 
               type="file" 
               ref={fileInputRef} 
@@ -730,7 +781,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="p-3.5 rounded-xl bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600 hover:border-indigo-200 transition-all hover:bg-white hover:shadow-sm"
+              className="p-3 lg:p-3.5 rounded-xl bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600 hover:border-indigo-200 transition-all hover:bg-white hover:shadow-sm"
               title="Ajouter un document"
             >
               <Paperclip size={20} />
@@ -739,12 +790,12 @@ export default function App() {
               type="button"
               onClick={toggleListening}
               className={cn(
-                "p-3.5 rounded-xl transition-all duration-300 border",
+                "p-3 lg:p-3.5 rounded-xl transition-all duration-300 border",
                 isListening 
-                  ? "bg-red-500 text-white border-red-600 animate-pulse shadow-lg shadow-red-200" 
-                  : "bg-slate-50 text-slate-400 border-slate-200 hover:text-indigo-600 hover:border-indigo-200 hover:bg-white hover:shadow-sm"
+                  ? "bg-red-50 border-red-200 text-red-500 animate-pulse" 
+                  : "bg-slate-50 border-slate-200 text-slate-400 hover:text-indigo-600 hover:border-indigo-200"
               )}
-              title={isListening ? "Arrêter l'écoute" : "Parler au Coach"}
+              title={isListening ? "Arrêter l'écoute" : "Parler"}
             >
               {isListening ? <MicOff size={20} /> : <Mic size={20} />}
             </button>
@@ -754,7 +805,7 @@ export default function App() {
               onChange={(e) => setInput(e.target.value)}
               placeholder={isListening ? "Le Coach vous écoute..." : "Répondez au Coach..."}
               className={cn(
-                "flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-6 py-3.5 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all text-base",
+                "flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 lg:px-6 py-3 lg:py-3.5 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all text-sm lg:text-base",
                 isListening && "placeholder:text-red-400"
               )}
             />
@@ -762,13 +813,21 @@ export default function App() {
               id="send-button"
               type="submit"
               disabled={(!input.trim() && !selectedFile) || isTyping}
-              className="bg-indigo-600 text-white p-3.5 rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 transition-all shadow-lg shadow-indigo-200"
+              className="bg-indigo-600 text-white p-3 lg:p-3.5 rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 transition-all shadow-lg shadow-indigo-200"
             >
               <Send size={20} />
             </button>
           </form>
         </div>
       </main>
+
+      {/* Mobile Sidebar Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-30 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
 
       {/* Hidden Audio Element */}
       <audio ref={audioRef} className="hidden" />
