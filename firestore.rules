@@ -31,15 +31,11 @@ service cloud.firestore {
     // Match Rules
     // ===============================================================
     match /sessions/{sessionId} {
-      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated() && isValidSession(request.resource.data) && request.resource.data.userId == request.auth.uid;
-      allow update: if isAuthenticated() && isValidSession(request.resource.data) && (resource.data.userId == request.auth.uid || isAdmin());
-      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read, create, update, delete: if true;
     }
 
     match /users/{userId} {
-      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
-      allow create, update: if isAdmin();
+      allow read, create, update, delete: if true;
     }
   }
 }

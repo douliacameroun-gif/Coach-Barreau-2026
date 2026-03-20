@@ -27,14 +27,7 @@ import {
 import Markdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { auth, db } from './firebase';
-import { 
-  signInWithPopup, 
-  GoogleAuthProvider, 
-  onAuthStateChanged, 
-  signOut,
-  User as FirebaseUser
-} from 'firebase/auth';
+import { db } from './firebase';
 import { 
   collection, 
   addDoc, 
@@ -104,7 +97,6 @@ interface ChatSession {
 // --- Components ---
 
 export default function App() {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -128,23 +120,12 @@ export default function App() {
   const chatRef = useRef<any>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
-      if (user) {
-        loadSessions(user.uid);
-      } else {
-        setSessions([]);
-        setMessages([]);
-        setCurrentSessionId(null);
-      }
-    });
-    return () => unsubscribe();
+    loadSessions();
   }, []);
 
-  const loadSessions = (uid: string) => {
+  const loadSessions = () => {
     const q = query(
       collection(db, 'sessions'),
-      where('userId', '==', uid),
       orderBy('lastUpdated', 'desc')
     );
 
@@ -157,29 +138,9 @@ export default function App() {
     });
   };
 
-  const login = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Login Error:", error);
-    }
-  };
-
-  const logout = async () => {
-    try {
-      await signOut(auth);
-      setIsStarted(false);
-    } catch (error) {
-      console.error("Logout Error:", error);
-    }
-  };
-
   const createNewSession = async () => {
-    if (!user) return;
-    
     const newSession = {
-      userId: user.uid,
+      userId: 'public',
       messages: [],
       lastUpdated: serverTimestamp(),
       createdAt: serverTimestamp()
@@ -236,7 +197,7 @@ export default function App() {
   };
 
   const saveMessageToFirestore = async (newMessages: Message[]) => {
-    if (!user || !currentSessionId) return;
+    if (!currentSessionId) return;
 
     try {
       const sessionRef = doc(db, 'sessions', currentSessionId);
@@ -295,10 +256,6 @@ export default function App() {
   }, [messages]);
 
   const startSession = async () => {
-    if (!user) {
-      await login();
-      return;
-    }
     const sessionId = await createNewSession();
     if (sessionId) {
       setIsStarted(true);
@@ -488,34 +445,23 @@ export default function App() {
                 <p className="text-[9px] text-indigo-400 uppercase tracking-[0.2em] font-bold">Session 2026</p>
               </div>
             </div>
-            {user && (
-              <button 
-                onClick={logout}
-                className="p-2 text-slate-400 hover:text-white transition-colors"
-                title="Déconnexion"
-              >
-                <LogOut size={18} />
-              </button>
-            )}
           </div>
 
           <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 flex items-center justify-between">
             <div>
               <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Candidate</p>
-              <p className="text-sm font-semibold text-white">{user?.displayName || 'Christiane Endalle'}</p>
+              <p className="text-sm font-semibold text-white">Christiane Endalle</p>
             </div>
-            {user && (
-              <button 
-                onClick={() => setShowHistory(!showHistory)}
-                className={cn(
-                  "p-2 rounded-lg transition-all",
-                  showHistory ? "bg-indigo-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-                )}
-                title="Historique"
-              >
-                <History size={18} />
-              </button>
-            )}
+            <button 
+              onClick={() => setShowHistory(!showHistory)}
+              className={cn(
+                "p-2 rounded-lg transition-all",
+                showHistory ? "bg-indigo-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+              )}
+              title="Historique"
+            >
+              <History size={18} />
+            </button>
           </div>
         </div>
 
@@ -655,19 +601,16 @@ export default function App() {
               <Scale className="text-white w-8 h-8" />
             </div>
             <h2 className="text-2xl font-bold text-slate-900 mb-3">
-              {user ? "Prête pour vos révisions ?" : "Bienvenue Christiane"}
+              Bienvenue Christiane
             </h2>
             <p className="text-sm text-slate-500 max-w-sm mb-8 leading-relaxed">
-              {user 
-                ? "Je suis votre Coach personnel pour le Barreau 2026. Cliquez ci-dessous pour commencer notre session."
-                : "Connectez-vous pour accéder à votre coach personnel et sauvegarder votre progression."}
+              Je suis votre Coach personnel pour le Barreau 2026. Cliquez ci-dessous pour commencer notre session.
             </p>
             <button 
               onClick={startSession}
               className="bg-indigo-600 text-white px-8 py-4 rounded-xl font-bold text-base hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 active:scale-95 flex items-center gap-2"
             >
-              {!user && <LogIn size={20} />}
-              {user ? "Commencer la session" : "Se connecter avec Google"}
+              Commencer la session
             </button>
           </div>
         )}
