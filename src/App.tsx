@@ -22,6 +22,7 @@ import {
   History,
   LogOut,
   LogIn,
+  Plus,
   PlusCircle,
   Menu,
   ChevronLeft
@@ -123,6 +124,11 @@ export default function App() {
   const chatRef = useRef<any>(null);
 
   useEffect(() => {
+    const savedSessionId = localStorage.getItem('currentSessionId');
+    if (savedSessionId) {
+      setCurrentSessionId(savedSessionId);
+      setIsStarted(true);
+    }
     loadSessions();
   }, []);
 
@@ -138,6 +144,15 @@ export default function App() {
         ...doc.data()
       })) as ChatSession[];
       setSessions(loadedSessions);
+      
+      // If we have a saved session ID, load its messages if not already loaded
+      const savedSessionId = localStorage.getItem('currentSessionId');
+      if (savedSessionId && messages.length === 0) {
+        const session = loadedSessions.find(s => s.id === savedSessionId);
+        if (session) {
+          loadSession(savedSessionId, loadedSessions);
+        }
+      }
     });
   };
 
@@ -151,9 +166,12 @@ export default function App() {
 
     try {
       const docRef = await addDoc(collection(db, 'sessions'), newSession);
-      setCurrentSessionId(docRef.id);
+      const sessionId = docRef.id;
+      setCurrentSessionId(sessionId);
+      localStorage.setItem('currentSessionId', sessionId);
       setMessages([]);
       setActiveSubject(null);
+      setIsSidebarOpen(false);
       
       // Reset Gemini chat
       chatRef.current = ai.chats.create({
@@ -163,16 +181,19 @@ export default function App() {
         },
       });
       
-      return docRef.id;
+      return sessionId;
     } catch (error) {
       console.error("Error creating session:", error);
     }
   };
 
-  const loadSession = async (sessionId: string) => {
-    const session = sessions.find(s => s.id === sessionId);
+  const loadSession = async (sessionId: string, sessionList?: ChatSession[]) => {
+    const list = sessionList || sessions;
+    const session = list.find(s => s.id === sessionId);
     if (session) {
       setCurrentSessionId(sessionId);
+      localStorage.setItem('currentSessionId', sessionId);
+      
       // Convert Firestore timestamps to Dates for the UI
       const formattedMessages = session.messages.map(msg => ({
         ...msg,
@@ -181,6 +202,7 @@ export default function App() {
       setMessages(formattedMessages);
       setActiveSubject(session.subject || null);
       setShowHistory(false);
+      setIsSidebarOpen(false);
       setIsStarted(true);
 
       // Re-initialize Gemini chat with history
@@ -203,9 +225,18 @@ export default function App() {
     if (!currentSessionId) return;
 
     try {
+      // Strip base64 data before saving to Firestore to avoid size limits and freezes
+      const messagesToSave = newMessages.map(msg => {
+        if (msg.attachment && msg.attachment.data) {
+          const { data, ...rest } = msg.attachment;
+          return { ...msg, attachment: rest };
+        }
+        return msg;
+      });
+
       const sessionRef = doc(db, 'sessions', currentSessionId);
       await updateDoc(sessionRef, {
-        messages: newMessages,
+        messages: messagesToSave,
         lastUpdated: serverTimestamp(),
         subject: activeSubject || undefined
       });
@@ -365,7 +396,14 @@ export default function App() {
       } : undefined
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    // Strip base64 data from the user message before updating state to avoid browser memory issues
+    const userMessageForState = { ...userMessage };
+    if (userMessageForState.attachment) {
+      const { data, ...rest } = userMessageForState.attachment;
+      userMessageForState.attachment = rest;
+    }
+
+    setMessages(prev => [...prev, userMessageForState]);
     const currentInput = input;
     const currentFile = selectedFile;
     
@@ -391,8 +429,10 @@ export default function App() {
 
       const text = response.text;
       const modelMessage: Message = { role: 'model', content: text, timestamp: new Date() };
-      const updatedMessages = [...messages, userMessage, modelMessage];
+      
       setMessages(prev => [...prev, modelMessage]);
+      
+      const updatedMessages = [...messages, userMessageForState, modelMessage];
       saveMessageToFirestore(updatedMessages);
       if (isTtsEnabled) generateSpeech(text);
     } catch (error) {
@@ -432,10 +472,10 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen bg-[#f8f9fa] overflow-hidden">
+    <div className="flex h-[100dvh] bg-[#f8f9fa] overflow-hidden flex-col lg:flex-row">
       {/* Sidebar - Subjects and Info */}
       <aside className={cn(
-        "fixed inset-y-0 right-0 z-40 w-[320px] bg-slate-900 text-white flex flex-col border-l border-slate-800 transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 order-2",
+        "fixed inset-y-0 right-0 z-50 w-full sm:w-[320px] bg-slate-900 text-white flex flex-col border-l border-slate-800 transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 order-2",
         isSidebarOpen ? "translate-x-0" : "translate-x-full"
       )}>
         <div className="p-4 lg:p-6 border-b border-slate-800">
@@ -485,52 +525,57 @@ export default function App() {
             <section className="animate-in fade-in slide-in-from-right-4 duration-300">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                  <History size={12} className="text-indigo-500" /> Historique des sessions
+                  <History size={12} className="text-indigo-500" /> Historique
                 </h2>
                 <button 
                   onClick={createNewSession}
-                  className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 uppercase tracking-wider"
+                  className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 uppercase tracking-wider bg-indigo-500/10 px-2 py-1 rounded-md"
                 >
                   <PlusCircle size={12} /> Nouvelle
                 </button>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-2.5">
                 {sessions.length === 0 ? (
-                  <p className="text-xs text-slate-500 italic text-center py-4">Aucune session enregistrée</p>
+                  <div className="text-center py-8 border-2 border-dashed border-slate-800 rounded-2xl">
+                    <p className="text-xs text-slate-500 italic">Aucune session enregistrée</p>
+                  </div>
                 ) : (
                   sessions.map((session) => (
                     <button
                       key={session.id}
                       onClick={() => loadSession(session.id)}
                       className={cn(
-                        "w-full p-3 rounded-xl transition-all text-left border group",
+                        "w-full p-3.5 rounded-2xl transition-all text-left border group relative",
                         currentSessionId === session.id 
-                          ? "bg-indigo-600 border-indigo-500 shadow-md" 
-                          : "bg-slate-800/40 border-slate-700/50 hover:bg-slate-800"
+                          ? "bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-500/20 ring-2 ring-indigo-500/20" 
+                          : "bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600"
                       )}
                     >
-                      <div className="flex justify-between items-start mb-1">
+                      <div className="flex justify-between items-start mb-2">
                         <span className={cn(
-                          "text-[10px] font-bold uppercase tracking-wider",
-                          currentSessionId === session.id ? "text-indigo-200" : "text-slate-500"
+                          "text-[10px] font-bold uppercase tracking-wider truncate max-w-[120px]",
+                          currentSessionId === session.id ? "text-indigo-100" : "text-slate-400"
                         )}>
                           {session.subject || "Session générale"}
                         </span>
                         <span className={cn(
-                          "text-[9px]",
+                          "text-[9px] font-medium",
                           currentSessionId === session.id ? "text-indigo-300" : "text-slate-600"
                         )}>
                           {session.lastUpdated instanceof Timestamp 
-                            ? session.lastUpdated.toDate().toLocaleDateString() 
-                            : new Date(session.lastUpdated).toLocaleDateString()}
+                            ? session.lastUpdated.toDate().toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) 
+                            : new Date(session.lastUpdated).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
                         </span>
                       </div>
                       <p className={cn(
-                        "text-xs line-clamp-2 leading-relaxed",
+                        "text-xs line-clamp-2 leading-relaxed font-medium",
                         currentSessionId === session.id ? "text-white" : "text-slate-400"
                       )}>
                         {session.messages[session.messages.length - 1]?.content || "Nouvelle session"}
                       </p>
+                      {currentSessionId === session.id && (
+                        <div className="absolute -left-1 top-1/2 -translate-y-1/2 w-1 h-8 bg-white rounded-full shadow-sm" />
+                      )}
                     </button>
                   ))
                 )}
@@ -584,6 +629,12 @@ export default function App() {
         </div>
 
         <div className="p-6 border-t border-slate-800 bg-slate-900/50">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2 text-[10px] font-bold text-emerald-500 uppercase tracking-widest">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Session Sauvegardée
+            </div>
+          </div>
           <div className="flex items-center justify-between">
             <button 
               onClick={() => setIsTtsEnabled(!isTtsEnabled)}
@@ -598,7 +649,7 @@ export default function App() {
               {isTtsEnabled ? "Voix Active" : "Voix Muette"}
             </button>
             <button 
-              onClick={() => window.location.reload()}
+              onClick={createNewSession}
               className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-400 hover:text-white transition-colors"
               title="Nouvelle session"
             >
@@ -611,23 +662,33 @@ export default function App() {
       {/* Main Block - Chatbot and Discussion */}
       <main className="flex-1 flex flex-col bg-white order-1 relative overflow-hidden">
         {/* Mobile Header */}
-        <header className="lg:hidden flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-white z-30">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm overflow-hidden border border-slate-100">
-              <img 
-                src="https://i.postimg.cc/G2LvBGPN/generated_image_(1).png" 
-                alt="Logo" 
-                className="w-full h-full object-cover"
-                referrerPolicy="no-referrer"
-              />
+        <header className="lg:hidden flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-white z-30 sticky top-0 shadow-sm">
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setIsSidebarOpen(true)}
+              className="p-2 -ml-2 text-slate-600 hover:bg-slate-50 rounded-lg transition-colors"
+            >
+              <Menu size={22} />
+            </button>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-sm overflow-hidden">
+                <img 
+                  src="https://i.postimg.cc/G2LvBGPN/generated_image_(1).png" 
+                  alt="Logo" 
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+              <span className="font-bold text-slate-900 text-sm tracking-tight">Coach Barreau</span>
             </div>
-            <span className="font-bold text-slate-900 text-sm">Coach Barreau</span>
           </div>
           <button 
-            onClick={() => setIsSidebarOpen(true)}
-            className="p-2 text-slate-600 hover:bg-slate-50 rounded-lg"
+            onClick={createNewSession}
+            className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors flex items-center gap-1"
+            title="Nouvelle Session"
           >
-            <Menu size={20} />
+            <Plus size={18} />
+            <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">Nouveau</span>
           </button>
         </header>
 
@@ -659,22 +720,22 @@ export default function App() {
         {/* Chat Area */}
         <div 
           ref={scrollRef}
-          className="flex-1 overflow-y-auto p-4 lg:p-10 space-y-6 lg:space-y-10 scroll-smooth"
+          className="flex-1 overflow-y-auto p-3 lg:p-10 space-y-4 lg:space-y-10 scroll-smooth bg-slate-50/30"
         >
           {messages.map((msg, i) => (
             <div 
               key={i} 
               className={cn(
-                "flex w-full animate-in fade-in slide-in-from-bottom-4 duration-500",
+                "flex w-full animate-in fade-in slide-in-from-bottom-2 duration-400",
                 msg.role === 'user' ? "justify-end" : "justify-start"
               )}
             >
               <div className={cn(
-                "flex gap-4 max-w-[85%]",
+                "flex gap-2 lg:gap-4 max-w-[92%] lg:max-w-[85%]",
                 msg.role === 'user' ? "flex-row-reverse" : "flex-row"
               )}>
                 <div className={cn(
-                  "w-8 h-8 lg:w-10 lg:h-10 rounded-full flex-shrink-0 flex items-center justify-center shadow-sm mt-0.5 overflow-hidden border border-slate-200",
+                  "w-7 h-7 lg:w-10 lg:h-10 rounded-full flex-shrink-0 flex items-center justify-center shadow-sm mt-0.5 overflow-hidden border border-slate-200",
                   msg.role === 'user' ? "bg-slate-100" : "bg-white shadow-lg shadow-indigo-500/10"
                 )}>
                   {msg.role === 'user' ? (
@@ -705,18 +766,18 @@ export default function App() {
                     </div>
                   )}
                   <div className={cn(
-                    "p-3.5 rounded-2xl shadow-sm border leading-relaxed",
+                    "p-3 lg:p-4 rounded-2xl shadow-sm border leading-relaxed text-sm lg:text-base",
                     msg.role === 'user' 
                       ? "bg-white border-slate-200 text-slate-800 rounded-tr-none" 
                       : "bg-indigo-50/50 border-indigo-100 text-slate-900 rounded-tl-none"
                   )}>
-                    <div className="markdown-body prose prose-slate max-w-none prose-p:leading-relaxed prose-strong:text-indigo-900 prose-p:my-1 prose-ul:my-1 prose-li:my-0.5">
+                    <div className="markdown-body prose prose-slate max-w-none prose-p:leading-relaxed prose-strong:text-indigo-900 prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 text-sm lg:text-base">
                       <Markdown>
                         {msg.content}
                       </Markdown>
                     </div>
                     <div className={cn(
-                      "text-[10px] mt-4 font-bold opacity-30 uppercase tracking-[0.15em]",
+                      "text-[9px] lg:text-[10px] mt-3 font-bold opacity-30 uppercase tracking-[0.15em]",
                       msg.role === 'user' ? "text-right" : "text-left"
                     )}>
                       {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -749,23 +810,23 @@ export default function App() {
         </div>
 
         {/* Input Area */}
-        <div className="p-4 lg:p-6 bg-white border-t border-slate-100">
+        <div className="p-3 lg:p-6 bg-white border-t border-slate-100 shadow-[0_-4px_20px_-5px_rgba(0,0,0,0.05)]">
           {selectedFile && (
-            <div className="mb-4 p-3 bg-indigo-50 border border-indigo-100 rounded-2xl flex items-center justify-between animate-in slide-in-from-bottom-2">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-white rounded-xl text-indigo-600 shadow-sm">
-                  <File size={18} />
+            <div className="mb-3 p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-between animate-in slide-in-from-bottom-2">
+              <div className="flex items-center gap-2 lg:gap-3">
+                <div className="p-1.5 bg-white rounded-lg text-indigo-600 shadow-sm">
+                  <File size={16} />
                 </div>
-                <div>
-                  <p className="text-sm font-bold text-slate-700 truncate max-w-[150px] lg:max-w-[250px]">{selectedFile.file.name}</p>
-                  <p className="text-[10px] text-indigo-500 uppercase font-bold tracking-wider">Document prêt</p>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-slate-700 truncate max-w-[120px] sm:max-w-[250px]">{selectedFile.file.name}</p>
+                  <p className="text-[9px] text-indigo-500 uppercase font-bold tracking-wider">Document prêt</p>
                 </div>
               </div>
               <button 
                 onClick={() => setSelectedFile(null)}
-                className="p-1.5 text-slate-400 hover:text-red-500 transition-colors bg-white rounded-lg shadow-sm border border-slate-100"
+                className="p-1 text-slate-400 hover:text-red-500 transition-colors bg-white rounded-lg shadow-sm border border-slate-100"
               >
-                <X size={16} />
+                <X size={14} />
               </button>
             </div>
           )}
@@ -781,7 +842,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="p-3 lg:p-3.5 rounded-xl bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600 hover:border-indigo-200 transition-all hover:bg-white hover:shadow-sm"
+              className="p-2.5 lg:p-3.5 rounded-xl bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600 hover:border-indigo-200 transition-all hover:bg-white hover:shadow-sm"
               title="Ajouter un document"
             >
               <Paperclip size={20} />
@@ -790,7 +851,7 @@ export default function App() {
               type="button"
               onClick={toggleListening}
               className={cn(
-                "p-3 lg:p-3.5 rounded-xl transition-all duration-300 border",
+                "p-2.5 lg:p-3.5 rounded-xl transition-all duration-300 border",
                 isListening 
                   ? "bg-red-50 border-red-200 text-red-500 animate-pulse" 
                   : "bg-slate-50 border-slate-200 text-slate-400 hover:text-indigo-600 hover:border-indigo-200"
@@ -803,9 +864,9 @@ export default function App() {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={isListening ? "Le Coach vous écoute..." : "Répondez au Coach..."}
+              placeholder={isListening ? "Le Coach vous écoute..." : "Répondez..."}
               className={cn(
-                "flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 lg:px-6 py-3 lg:py-3.5 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all text-sm lg:text-base",
+                "flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 lg:px-6 py-2.5 lg:py-3.5 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all text-sm lg:text-base",
                 isListening && "placeholder:text-red-400"
               )}
             />
@@ -813,7 +874,7 @@ export default function App() {
               id="send-button"
               type="submit"
               disabled={(!input.trim() && !selectedFile) || isTyping}
-              className="bg-indigo-600 text-white p-3 lg:p-3.5 rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 transition-all shadow-lg shadow-indigo-200"
+              className="bg-indigo-600 text-white p-2.5 lg:p-3.5 rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 transition-all shadow-lg shadow-indigo-200"
             >
               <Send size={20} />
             </button>
