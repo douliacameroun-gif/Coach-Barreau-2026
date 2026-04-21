@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI, Modality, GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI, Modality, GenerateContentResponse, Type } from "@google/genai";
 import { 
   Send, 
   User, 
@@ -25,25 +25,15 @@ import {
   Plus,
   PlusCircle,
   Menu,
-  ChevronLeft
+  ChevronLeft,
+  Search,
+  Globe
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { db } from './firebase';
-import { 
-  collection, 
-  addDoc, 
-  updateDoc, 
-  doc, 
-  query, 
-  where, 
-  orderBy, 
-  onSnapshot,
-  Timestamp,
-  getDoc,
-  serverTimestamp
-} from 'firebase/firestore';
+import axios from 'axios';
+import { v4 as uuidv4 } from 'uuid';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -95,6 +85,7 @@ interface ChatSession {
   messages: Message[];
   lastUpdated: any;
   subject?: string;
+  title?: string;
 }
 
 // --- Components ---
@@ -114,6 +105,8 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
+  const [isSearchEnabled, setIsSearchEnabled] = useState(true);
+  
   const scrollRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -132,45 +125,49 @@ export default function App() {
     loadSessions();
   }, []);
 
-  const loadSessions = () => {
-    const q = query(
-      collection(db, 'sessions'),
-      orderBy('lastUpdated', 'desc')
-    );
-
-    return onSnapshot(q, (snapshot) => {
-      const loadedSessions = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as ChatSession[];
+  const loadSessions = async () => {
+    try {
+      console.log("Loading sessions from Airtable...");
+      const response = await axios.get('/api/sessions');
+      console.log("Airtable sessions response status:", response.status);
+      
+      if (!Array.isArray(response.data)) {
+        console.error("FATAL: Sessions data is not an array. Received type:", typeof response.data);
+        console.error("Raw response data:", response.data);
+        setSessions([]);
+        return;
+      }
+      
+      const loadedSessions = response.data.map((s: any) => ({
+        id: s['ID Session'],
+        subject: s['Sujet Principal'],
+        title: s['Titre de la conversation'],
+        lastUpdated: s['Dernière activité'],
+        messages: [] 
+      }));
       setSessions(loadedSessions);
       
-      // If we have a saved session ID, load its messages if not already loaded
       const savedSessionId = localStorage.getItem('currentSessionId');
-      if (savedSessionId && messages.length === 0) {
-        const session = loadedSessions.find(s => s.id === savedSessionId);
-        if (session) {
-          loadSession(savedSessionId, loadedSessions);
-        }
+      if (savedSessionId) {
+        loadSession(savedSessionId);
       }
-    });
+    } catch (error) {
+      console.error("Error loading sessions from Airtable:", error);
+    }
   };
 
   const createNewSession = async () => {
-    const newSession = {
-      userId: 'public',
-      messages: [],
-      lastUpdated: serverTimestamp(),
-      createdAt: serverTimestamp()
-    };
-
+    const sessionId = uuidv4();
     try {
-      const docRef = await addDoc(collection(db, 'sessions'), newSession);
-      const sessionId = docRef.id;
+      await axios.post('/api/sessions', {
+        sessionId,
+        title: 'Nouvelle Session',
+        subject: activeSubject || 'Général'
+      });
+      
       setCurrentSessionId(sessionId);
       localStorage.setItem('currentSessionId', sessionId);
       setMessages([]);
-      setActiveSubject(null);
       setIsSidebarOpen(false);
       
       // Reset Gemini chat
@@ -181,32 +178,35 @@ export default function App() {
         },
       });
       
+      loadSessions();
       return sessionId;
     } catch (error) {
-      console.error("Error creating session:", error);
+      console.error("Error creating session in Airtable:", error);
     }
   };
 
-  const loadSession = async (sessionId: string, sessionList?: ChatSession[]) => {
-    const list = sessionList || sessions;
-    const session = list.find(s => s.id === sessionId);
-    if (session) {
+  const loadSession = async (sessionId: string) => {
+    try {
+      const resp = await axios.get(`/api/sessions/${sessionId}/messages`);
+      if (!Array.isArray(resp.data)) {
+        console.warn("Messages data is not an array:", resp.data);
+        return;
+      }
+      const formattedMessages = resp.data.map((msg: any) => ({
+        role: msg.role,
+        content: msg.content,
+        timestamp: new Date(msg.timestamp)
+      }));
+      
+      setMessages(formattedMessages);
       setCurrentSessionId(sessionId);
       localStorage.setItem('currentSessionId', sessionId);
-      
-      // Convert Firestore timestamps to Dates for the UI
-      const formattedMessages = session.messages.map(msg => ({
-        ...msg,
-        timestamp: msg.timestamp instanceof Timestamp ? msg.timestamp.toDate() : new Date(msg.timestamp)
-      }));
-      setMessages(formattedMessages);
-      setActiveSubject(session.subject || null);
       setShowHistory(false);
       setIsSidebarOpen(false);
       setIsStarted(true);
 
       // Re-initialize Gemini chat with history
-      const history = formattedMessages.map(msg => ({
+      const history = formattedMessages.map((msg: any) => ({
         role: msg.role === 'user' ? 'user' : 'model',
         parts: [{ text: msg.content }]
       }));
@@ -218,30 +218,47 @@ export default function App() {
         },
         history: history
       });
+    } catch (error) {
+      console.error("Error loading messages from Airtable:", error);
     }
   };
 
-  const saveMessageToFirestore = async (newMessages: Message[]) => {
-    if (!currentSessionId) return;
-
+  const saveMessageToAirtable = async (message: Message) => {
+    if (!currentSessionId) return null;
     try {
-      // Strip base64 data before saving to Firestore to avoid size limits and freezes
-      const messagesToSave = newMessages.map(msg => {
-        if (msg.attachment && msg.attachment.data) {
-          const { data, ...rest } = msg.attachment;
-          return { ...msg, attachment: rest };
-        }
-        return msg;
+      const response = await axios.post('/api/messages', {
+        sessionId: currentSessionId,
+        role: message.role,
+        content: message.content,
+        timestamp: message.timestamp.toISOString()
       });
-
-      const sessionRef = doc(db, 'sessions', currentSessionId);
-      await updateDoc(sessionRef, {
-        messages: messagesToSave,
-        lastUpdated: serverTimestamp(),
-        subject: activeSubject || undefined
-      });
+      
+      // If there's an attachment, upload it too
+      if (message.attachment && selectedFile) {
+        const formData = new FormData();
+        formData.append('file', selectedFile.file);
+        formData.append('messageId', response.data.id);
+        
+        await axios.post('/api/upload', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+      }
+      
+      return response.data.id;
     } catch (error) {
-      console.error("Error saving message:", error);
+      console.error("Error saving message to Airtable:", error);
+      return null;
+    }
+  };
+
+  const performWebSearch = async (query: string) => {
+    if (!isSearchEnabled) return null;
+    try {
+      const response = await axios.post('/api/search', { query });
+      return response.data.answer || response.data.results.map((r: any) => r.content).join('\n');
+    } catch (error) {
+      console.error("Search Error:", error);
+      return null;
     }
   };
 
@@ -300,9 +317,8 @@ export default function App() {
       const response = await chatRef.current.sendMessage({ message: "Bonjour Coach, je suis prête pour ma session de révision." });
       const text = response.text;
       const newMessage: Message = { role: 'model', content: text, timestamp: new Date() };
-      const updatedMessages = [newMessage];
-      setMessages(updatedMessages);
-      saveMessageToFirestore(updatedMessages);
+      setMessages([newMessage]);
+      saveMessageToAirtable(newMessage);
       if (isTtsEnabled) generateSpeech(text);
     } catch (error) {
       console.error("Error getting greeting:", error);
@@ -318,7 +334,7 @@ export default function App() {
       const cleanText = text.replace(/<[^>]*>/g, '');
       
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
+        model: "gemini-3.1-flash-tts-preview",
         contents: [{ parts: [{ text: `Lis ceci avec une voix de coach professionnel et encourageant : ${cleanText}` }] }],
         config: {
           responseModalities: [Modality.AUDIO],
@@ -370,9 +386,9 @@ export default function App() {
       const response = await chatRef.current.sendMessage({ message: text });
       const responseText = response.text;
       const modelMessage: Message = { role: 'model', content: responseText, timestamp: new Date() };
-      const updatedMessages = [...messages, userMessage, modelMessage];
       setMessages(prev => [...prev, modelMessage]);
-      saveMessageToFirestore(updatedMessages);
+      saveMessageToAirtable(userMessage);
+      saveMessageToAirtable(modelMessage);
       if (isTtsEnabled) generateSpeech(responseText);
     } catch (error) {
       console.error("Chat Error:", error);
@@ -396,14 +412,7 @@ export default function App() {
       } : undefined
     };
 
-    // Strip base64 data from the user message before updating state to avoid browser memory issues
-    const userMessageForState = { ...userMessage };
-    if (userMessageForState.attachment) {
-      const { data, ...rest } = userMessageForState.attachment;
-      userMessageForState.attachment = rest;
-    }
-
-    setMessages(prev => [...prev, userMessageForState]);
+    setMessages(prev => [...prev, userMessage]);
     const currentInput = input;
     const currentFile = selectedFile;
     
@@ -412,9 +421,21 @@ export default function App() {
     setIsTyping(true);
 
     try {
+      // Save User Message to Airtable first to get ID for attachment linking
+      await saveMessageToAirtable(userMessage);
+
+      // 1. Check if we need a web search
+      let searchContext = "";
+      if (isSearchEnabled && (currentInput.toLowerCase().includes('actualité') || currentInput.toLowerCase().includes('récent') || currentInput.toLowerCase().includes('cameroun'))) {
+        const searchResults = await performWebSearch(currentInput);
+        if (searchResults) {
+          searchContext = `\n\n[CONTEXTE D'ACTUALITÉ TAVILY] : ${searchResults}\n\nUtilise ces informations récentes pour enrichir ta réponse.`;
+        }
+      }
+
       let response;
       if (currentFile) {
-        const parts: any[] = [{ text: currentInput || "Analyse ce document s'il te plaît." }];
+        const parts: any[] = [{ text: (currentInput || "Analyse ce document s'il te plaît.") + searchContext }];
         parts.push({
           inlineData: {
             data: currentFile.base64,
@@ -424,16 +445,15 @@ export default function App() {
         
         response = await chatRef.current.sendMessage({ message: { parts } });
       } else {
-        response = await chatRef.current.sendMessage({ message: currentInput });
+        response = await chatRef.current.sendMessage({ message: currentInput + searchContext });
       }
 
       const text = response.text;
       const modelMessage: Message = { role: 'model', content: text, timestamp: new Date() };
       
       setMessages(prev => [...prev, modelMessage]);
-      
-      const updatedMessages = [...messages, userMessageForState, modelMessage];
-      saveMessageToFirestore(updatedMessages);
+      saveMessageToAirtable(modelMessage);
+
       if (isTtsEnabled) generateSpeech(text);
     } catch (error) {
       console.error("Chat Error:", error);
@@ -527,12 +547,24 @@ export default function App() {
                 <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
                   <History size={12} className="text-indigo-500" /> Historique
                 </h2>
-                <button 
-                  onClick={createNewSession}
-                  className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 uppercase tracking-wider bg-indigo-500/10 px-2 py-1 rounded-md"
-                >
-                  <PlusCircle size={12} /> Nouvelle
-                </button>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setIsSearchEnabled(!isSearchEnabled)}
+                    className={cn(
+                      "text-[9px] font-bold px-2 py-1 rounded-md transition-all flex items-center gap-1",
+                      isSearchEnabled ? "bg-indigo-600 text-white" : "bg-slate-700 text-slate-400"
+                    )}
+                    title={isSearchEnabled ? "Recherche Web Activée" : "Recherche Web Désactivée"}
+                  >
+                    <Globe size={10} /> {isSearchEnabled ? "Web ON" : "Web OFF"}
+                  </button>
+                  <button 
+                    onClick={createNewSession}
+                    className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 uppercase tracking-wider bg-indigo-500/10 px-2 py-1 rounded-md"
+                  >
+                    <PlusCircle size={12} /> Nouvelle
+                  </button>
+                </div>
               </div>
               <div className="space-y-2.5">
                 {sessions.length === 0 ? (
@@ -562,16 +594,14 @@ export default function App() {
                           "text-[9px] font-medium",
                           currentSessionId === session.id ? "text-indigo-300" : "text-slate-600"
                         )}>
-                          {session.lastUpdated instanceof Timestamp 
-                            ? session.lastUpdated.toDate().toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) 
-                            : new Date(session.lastUpdated).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
+                          {new Date(session.lastUpdated).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
                         </span>
                       </div>
                       <p className={cn(
                         "text-xs line-clamp-2 leading-relaxed font-medium",
                         currentSessionId === session.id ? "text-white" : "text-slate-400"
                       )}>
-                        {session.messages[session.messages.length - 1]?.content || "Nouvelle session"}
+                        {session.title || "Nouvelle session"}
                       </p>
                       {currentSessionId === session.id && (
                         <div className="absolute -left-1 top-1/2 -translate-y-1/2 w-1 h-8 bg-white rounded-full shadow-sm" />
