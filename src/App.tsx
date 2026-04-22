@@ -116,6 +116,7 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const recognitionRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Initialize Gemini
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
@@ -129,6 +130,13 @@ export default function App() {
     }
     loadSessions();
   }, []);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
+    }
+  }, [input]);
 
   const loadSessions = async () => {
     try {
@@ -429,8 +437,11 @@ export default function App() {
       if (messages.length <= 2 && currentSessionId) {
         const summaryPrompt = `Fais un titre très court (4-6 mots max) pour cette session de révision basée sur ce premier échange : "${responseText.substring(0, 100)}"`;
         try {
-          const summaryResult = await ai.getGenerativeModel({ model: "gemini-3-flash-preview" }).generateContent(summaryPrompt);
-          const newTitle = summaryResult.response.text();
+          const summaryResult = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: [{ parts: [{ text: summaryPrompt }] }]
+          });
+          const newTitle = summaryResult.text;
           updateSessionTitle(currentSessionId, newTitle.replace(/[#*]/g, '').trim());
         } catch (e) {
           console.error("Title auto-fill error:", e);
@@ -506,8 +517,11 @@ export default function App() {
       if (messages.length <= 2 && currentSessionId) {
         const summaryPrompt = `Fais un titre très court (4-6 mots max) pour cette session de révision basée sur ce premier échange : "${text.substring(0, 100)}"`;
         try {
-          const summaryResult = await ai.getGenerativeModel({ model: "gemini-3-flash-preview" }).generateContent(summaryPrompt);
-          const newTitle = summaryResult.response.text();
+          const summaryResult = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: [{ parts: [{ text: summaryPrompt }] }]
+          });
+          const newTitle = summaryResult.text;
           updateSessionTitle(currentSessionId, newTitle.replace(/[#*]/g, '').trim());
         } catch (e) {
           console.error("Title auto-fill error:", e);
@@ -999,13 +1013,20 @@ export default function App() {
             >
               {isListening ? <MicOff size={20} /> : <Mic size={20} />}
             </button>
-            <input
-              type="text"
+            <textarea
+              ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={isListening ? "Le Coach vous écoute..." : "Répondez..."}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              placeholder={isListening ? "Le Coach vous écoute..." : "Écrivez votre message..."}
+              rows={1}
               className={cn(
-                "flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 lg:px-6 py-2.5 lg:py-3.5 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all text-sm lg:text-base",
+                "flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 lg:px-6 py-2.5 lg:py-3.5 text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all text-sm lg:text-base resize-none overflow-y-auto max-h-[200px]",
                 isListening && "placeholder:text-red-400"
               )}
             />
