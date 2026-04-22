@@ -27,7 +27,10 @@ import {
   Menu,
   ChevronLeft,
   Search,
-  Globe
+  Globe,
+  Landmark,
+  Briefcase,
+  PenTool
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
@@ -42,13 +45,15 @@ function cn(...inputs: ClassValue[]) {
 // --- Constants & Types ---
 
 const SUBJECTS = [
-  { id: 'famille', name: 'Droit patrimonial de la famille', icon: Users, color: 'text-blue-600' },
-  { id: 'procedure', name: 'Procédure civile', icon: Scale, color: 'text-indigo-600' },
-  { id: 'penal', name: 'Droit pénal', icon: ShieldAlert, color: 'text-red-600' },
-  { id: 'execution', name: "Voies d'exécution", icon: Gavel, color: 'text-amber-600' },
-  { id: 'social', name: 'Droit social', icon: FileText, color: 'text-emerald-600' },
-  { id: 'administratif', name: 'Droit administratif', icon: Building2, color: 'text-purple-600' },
-  { id: 'methodologie', name: 'Méthodologie juridique', icon: FileText, color: 'text-cyan-600' },
+  { id: 1, name: "Droit Civil", icon: Users, color: "text-blue-500" },
+  { id: 2, name: "Droit Pénal", icon: ShieldAlert, color: "text-red-500" },
+  { id: 3, name: "Procédure Civile", icon: Scale, color: "text-indigo-500" },
+  { id: 4, name: "Droit & Procédure Pénale", icon: Landmark, color: "text-rose-500" },
+  { id: 5, name: "Droit Commercial OHADA", icon: Briefcase, color: "text-amber-500" },
+  { id: 6, name: "Droit du Travail", icon: FileText, color: "text-orange-500" },
+  { id: 7, name: "Droit Administratif", icon: Building2, color: "text-purple-500" },
+  { id: 8, name: "Voies D'execution", icon: Gavel, color: "text-cyan-500" },
+  { id: 9, name: "Methodologie juridique", icon: PenTool, color: "text-slate-500" },
 ];
 
 const SYSTEM_INSTRUCTION = `Tu es le "Coach Barreau 2026", un assistant juridique expert en droit camerounais, dévoué à la préparation de Christiane Endalle pour l'examen du barreau de la session 2026.
@@ -127,24 +132,35 @@ export default function App() {
 
   const loadSessions = async () => {
     try {
-      console.log("Loading sessions from Airtable...");
       const response = await axios.get('/api/sessions');
-      console.log("Airtable sessions response status:", response.status);
       
       if (!Array.isArray(response.data)) {
-        console.error("FATAL: Sessions data is not an array. Received type:", typeof response.data);
-        console.error("Raw response data:", response.data);
         setSessions([]);
         return;
       }
       
-      const loadedSessions = response.data.map((s: any) => ({
-        id: s['ID Session'],
-        subject: s['Sujet Principal'],
-        title: s['Titre de la conversation'],
-        lastUpdated: s['Dernière activité'],
-        messages: [] 
-      }));
+      // Filter out fictitious mock data that might be in Airtable from early tests
+      const FICTITIOUS_SUBJECTS = [
+        'Cloud Computing', 'Data Science', 'SEO', 'UX/UI', 'Marketing Digital', 
+        'E-commerce', 'Réseaux Sociaux', 'Cybersécurité', 'Entrepreneuriat',
+        'Communication', 'Développement Personnel', 'Formation en ligne',
+        'Gestion de Projet', 'Développement Web', 'Intelligence Artificielle'
+      ];
+
+      const loadedSessions = response.data
+        .map((s: any) => ({
+          airtableId: s.airtableId,
+          id: s['ID Session'],
+          subject: s['Sujet Principal'],
+          title: s['Titre de la conversation'],
+          lastUpdated: s['Dernière activité'],
+          messages: [] 
+        }))
+        .filter((s: any) => {
+          // Only keep subjects that are NOT in the list of fictitious subjects
+          return !FICTITIOUS_SUBJECTS.includes(s.subject);
+        });
+
       setSessions(loadedSessions);
       
       const savedSessionId = localStorage.getItem('currentSessionId');
@@ -152,23 +168,38 @@ export default function App() {
         loadSession(savedSessionId);
       }
     } catch (error) {
-      console.error("Error loading sessions from Airtable:", error);
+      console.error("Error loading sessions:", error);
     }
   };
 
-  const createNewSession = async () => {
+  const updateSessionTitle = async (sessionId: string, newTitle: string) => {
+    try {
+      await axios.post('/api/sessions', {
+        sessionId,
+        title: newTitle.substring(0, 100), // Enforce max length for safety
+        subject: activeSubject || 'Révision'
+      });
+      loadSessions(); // Refresh list to show new title
+    } catch (error) {
+      console.error("Error updating session title:", error);
+    }
+  };
+
+  const createNewSession = async (customSubject?: string) => {
     const sessionId = uuidv4();
+    const finalSubject = customSubject || activeSubject || 'Révision Générale';
     try {
       await axios.post('/api/sessions', {
         sessionId,
         title: 'Nouvelle Session',
-        subject: activeSubject || 'Général'
+        subject: finalSubject
       });
       
       setCurrentSessionId(sessionId);
       localStorage.setItem('currentSessionId', sessionId);
       setMessages([]);
       setIsSidebarOpen(false);
+      setActiveSubject(finalSubject === 'Révision Générale' ? null : finalSubject);
       
       // Reset Gemini chat
       chatRef.current = ai.chats.create({
@@ -303,18 +334,22 @@ export default function App() {
     }
   }, [messages]);
 
-  const startSession = async () => {
-    const sessionId = await createNewSession();
+  const startSession = async (subjectName?: string) => {
+    const sessionId = await createNewSession(subjectName);
     if (sessionId) {
       setIsStarted(true);
-      handleInitialGreeting();
+      handleInitialGreeting(subjectName);
     }
   };
 
-  const handleInitialGreeting = async () => {
+  const handleInitialGreeting = async (subjectName?: string) => {
     setIsTyping(true);
+    const initialPrompt = subjectName 
+      ? `Bonjour Coach, je souhaite réviser le sujet : ${subjectName}. Peux-tu me présenter les points clés à maîtriser ?`
+      : "Bonjour Coach, je suis prête pour ma session de révision.";
+      
     try {
-      const response = await chatRef.current.sendMessage({ message: "Bonjour Coach, je suis prête pour ma session de révision." });
+      const response = await chatRef.current.sendMessage({ message: initialPrompt });
       const text = response.text;
       const newMessage: Message = { role: 'model', content: text, timestamp: new Date() };
       setMessages([newMessage]);
@@ -389,6 +424,19 @@ export default function App() {
       setMessages(prev => [...prev, modelMessage]);
       saveMessageToAirtable(userMessage);
       saveMessageToAirtable(modelMessage);
+
+      // AUTOMATIC FILLING: Update session title based on the first real exchange
+      if (messages.length <= 2 && currentSessionId) {
+        const summaryPrompt = `Fais un titre très court (4-6 mots max) pour cette session de révision basée sur ce premier échange : "${responseText.substring(0, 100)}"`;
+        try {
+          const summaryResult = await ai.getGenerativeModel({ model: "gemini-3-flash-preview" }).generateContent(summaryPrompt);
+          const newTitle = summaryResult.response.text();
+          updateSessionTitle(currentSessionId, newTitle.replace(/[#*]/g, '').trim());
+        } catch (e) {
+          console.error("Title auto-fill error:", e);
+        }
+      }
+
       if (isTtsEnabled) generateSpeech(responseText);
     } catch (error) {
       console.error("Chat Error:", error);
@@ -454,6 +502,18 @@ export default function App() {
       setMessages(prev => [...prev, modelMessage]);
       saveMessageToAirtable(modelMessage);
 
+      // AUTOMATIC FILLING: Update session title based on the first real exchange
+      if (messages.length <= 2 && currentSessionId) {
+        const summaryPrompt = `Fais un titre très court (4-6 mots max) pour cette session de révision basée sur ce premier échange : "${text.substring(0, 100)}"`;
+        try {
+          const summaryResult = await ai.getGenerativeModel({ model: "gemini-3-flash-preview" }).generateContent(summaryPrompt);
+          const newTitle = summaryResult.response.text();
+          updateSessionTitle(currentSessionId, newTitle.replace(/[#*]/g, '').trim());
+        } catch (e) {
+          console.error("Title auto-fill error:", e);
+        }
+      }
+
       if (isTtsEnabled) generateSpeech(text);
     } catch (error) {
       console.error("Chat Error:", error);
@@ -482,165 +542,186 @@ export default function App() {
   };
 
   const selectSubject = (subjectName: string) => {
-    setActiveSubject(subjectName);
-    setInput(`Je souhaite réviser le sujet suivant : ${subjectName}`);
-    setIsSidebarOpen(false);
-    setTimeout(() => {
-      const btn = document.getElementById('send-button');
-      btn?.click();
-    }, 100);
+    startSession(subjectName);
   };
 
   return (
     <div className="flex h-[100dvh] bg-[#f8f9fa] overflow-hidden flex-col lg:flex-row">
-      {/* Sidebar - Subjects and Info */}
+      {/* Sidebar - Subjects and History */}
       <aside className={cn(
-        "fixed inset-y-0 right-0 z-50 w-full sm:w-[320px] bg-slate-900 text-white flex flex-col border-l border-slate-800 transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 order-2",
+        "fixed inset-y-0 right-0 z-50 w-full sm:w-[320px] bg-[#0f172a] text-white flex flex-col border-l border-slate-800 transition-transform duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] lg:relative lg:translate-x-0 order-2 overflow-hidden shadow-2xl lg:shadow-none",
         isSidebarOpen ? "translate-x-0" : "translate-x-full"
       )}>
-        <div className="p-4 lg:p-6 border-b border-slate-800">
-          <div className="flex items-center justify-between mb-4">
+        <div className="p-5 lg:p-6 border-b border-white/5 bg-white/[0.02]">
+          <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20 overflow-hidden">
+              <div className="w-10 h-10 bg-white rounded-2xl flex items-center justify-center shadow-xl shadow-indigo-500/20 overflow-hidden ring-2 ring-white/10">
                 <img 
                   src="https://i.postimg.cc/G2LvBGPN/generated_image_(1).png" 
                   alt="Logo" 
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover p-1"
                   referrerPolicy="no-referrer"
                 />
               </div>
-              <div>
-                <h1 className="text-lg font-bold tracking-tight">Coach Barreau</h1>
-                <p className="text-[9px] text-indigo-400 uppercase tracking-[0.2em] font-bold">Session 2026</p>
+              <div className="min-w-0">
+                <h1 className="text-base font-black tracking-tight text-white leading-none truncate">COACH BARREAU</h1>
+                <p className="text-[10px] text-indigo-400 uppercase tracking-[0.2em] font-black mt-1.5 opacity-80">Session 2026</p>
               </div>
             </div>
             <button 
               onClick={() => setIsSidebarOpen(false)}
-              className="lg:hidden p-2 text-slate-400 hover:text-white"
+              className="lg:hidden p-2 text-slate-400 hover:text-white bg-white/5 rounded-xl transition-colors"
             >
               <ChevronLeft size={20} />
             </button>
           </div>
 
-          <div className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/50 flex items-center justify-between">
-            <div>
-              <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Candidate</p>
-              <p className="text-sm font-semibold text-white">Christiane Endalle</p>
+          <div className="bg-white/5 rounded-[1.25rem] p-3.5 border border-white/5 flex items-center justify-between shadow-inner">
+            <div className="min-w-0">
+              <p className="text-[9px] text-slate-500 uppercase font-black tracking-widest mb-1 opacity-70">Candidate</p>
+              <p className="text-sm font-bold text-white truncate pr-2">Christiane Endalle</p>
             </div>
             <button 
               onClick={() => setShowHistory(!showHistory)}
               className={cn(
-                "p-2 rounded-lg transition-all",
-                showHistory ? "bg-indigo-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                "p-2.5 rounded-xl transition-all duration-300",
+                showHistory ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 rotate-12" : "bg-white/10 text-slate-300 hover:bg-white/20 active:scale-95"
               )}
-              title="Historique"
+              title="Historique de révision"
             >
               <History size={18} />
             </button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <div className="flex-1 overflow-y-auto px-5 lg:px-6 py-6 space-y-8 custom-scrollbar">
           {showHistory ? (
-            <section className="animate-in fade-in slide-in-from-right-4 duration-300">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                  <History size={12} className="text-indigo-500" /> Historique
+            <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
+              <div className="flex items-center justify-between sticky top-0 bg-[#0f172a]/95 backdrop-blur-md py-1 z-10 -mx-1 px-1">
+                <h2 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.2em] flex items-center gap-2">
+                  <History size={13} className="text-indigo-400" /> Archives par Discipline
                 </h2>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <button 
                     onClick={() => setIsSearchEnabled(!isSearchEnabled)}
                     className={cn(
-                      "text-[9px] font-bold px-2 py-1 rounded-md transition-all flex items-center gap-1",
-                      isSearchEnabled ? "bg-indigo-600 text-white" : "bg-slate-700 text-slate-400"
+                      "text-[9px] font-black p-1.5 rounded-lg transition-all border transition-all duration-300",
+                      isSearchEnabled ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/20" : "bg-white/5 border-white/5 text-slate-600 opacity-50"
                     )}
-                    title={isSearchEnabled ? "Recherche Web Activée" : "Recherche Web Désactivée"}
+                    title={isSearchEnabled ? "Recherche Web Active" : "Recherche Web Désactivée"}
                   >
-                    <Globe size={10} /> {isSearchEnabled ? "Web ON" : "Web OFF"}
-                  </button>
-                  <button 
-                    onClick={createNewSession}
-                    className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 uppercase tracking-wider bg-indigo-500/10 px-2 py-1 rounded-md"
-                  >
-                    <PlusCircle size={12} /> Nouvelle
+                    <Globe size={13} />
                   </button>
                 </div>
               </div>
-              <div className="space-y-2.5">
+              
+              <div className="space-y-6">
                 {sessions.length === 0 ? (
-                  <div className="text-center py-8 border-2 border-dashed border-slate-800 rounded-2xl">
-                    <p className="text-xs text-slate-500 italic">Aucune session enregistrée</p>
+                  <div className="text-center py-12 border-2 border-dashed border-white/5 rounded-[2rem] bg-white/[0.01]">
+                    <div className="w-12 h-12 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4 opacity-20">
+                      <History size={24} />
+                    </div>
+                    <p className="text-[11px] text-slate-600 italic font-bold uppercase tracking-wider px-4">Aucun enregistrement</p>
                   </div>
                 ) : (
-                  sessions.map((session) => (
-                    <button
-                      key={session.id}
-                      onClick={() => loadSession(session.id)}
-                      className={cn(
-                        "w-full p-3.5 rounded-2xl transition-all text-left border group relative",
-                        currentSessionId === session.id 
-                          ? "bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-500/20 ring-2 ring-indigo-500/20" 
-                          : "bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600"
-                      )}
-                    >
-                      <div className="flex justify-between items-start mb-2">
-                        <span className={cn(
-                          "text-[10px] font-bold uppercase tracking-wider truncate max-w-[120px]",
-                          currentSessionId === session.id ? "text-indigo-100" : "text-slate-400"
-                        )}>
-                          {session.subject || "Session générale"}
-                        </span>
-                        <span className={cn(
-                          "text-[9px] font-medium",
-                          currentSessionId === session.id ? "text-indigo-300" : "text-slate-600"
-                        )}>
-                          {new Date(session.lastUpdated).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
-                        </span>
+                  Object.entries(
+                    sessions.reduce((acc, session) => {
+                      const subject = session.subject || "Non catégorisé";
+                      if (!acc[subject]) acc[subject] = [];
+                      acc[subject].push(session);
+                      return acc;
+                    }, {} as Record<string, ChatSession[]>)
+                  ).map(([subject, sessionList]) => (
+                    <div key={subject} className="space-y-3">
+                      <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.25em] pl-1 opacity-80 flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
+                        {subject}
+                      </h3>
+                      <div className="space-y-2.5">
+                        {sessionList.map((session) => (
+                          <button
+                            key={session.id}
+                            onClick={() => loadSession(session.id)}
+                            className={cn(
+                              "w-full p-4 rounded-[1.25rem] transition-all duration-300 text-left border relative group ring-offset-[#0f172a]",
+                              currentSessionId === session.id 
+                                ? "bg-indigo-600 border-indigo-500 shadow-[0_10px_25px_-5px_rgba(79,70,229,0.4)]" 
+                                : "bg-white/[0.03] border-white/5 hover:bg-white/[0.06] hover:border-white/10 active:scale-[0.98]"
+                            )}
+                          >
+                            <div className="flex justify-between items-start mb-1.5 gap-2">
+                              <p className={cn(
+                                "text-xs font-bold line-clamp-1 flex-1 leading-tight",
+                                currentSessionId === session.id ? "text-white" : "text-slate-200"
+                              )}>
+                                {session.title || "Session d'étude"}
+                              </p>
+                              <span className={cn(
+                                "text-[9px] font-black opacity-40 whitespace-nowrap",
+                                currentSessionId === session.id ? "text-indigo-100" : "text-slate-500"
+                              )}>
+                                {new Date(session.lastUpdated).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}
+                              </span>
+                            </div>
+                            <div className={cn(
+                              "text-[10px] font-medium opacity-60 line-clamp-1",
+                              currentSessionId === session.id ? "text-indigo-200" : "text-slate-500"
+                            )}>
+                              {session.subject || "Mise à niveau"}
+                            </div>
+                            
+                            {currentSessionId === session.id && (
+                              <div className="absolute right-3 bottom-3 w-1.5 h-1.5 bg-white rounded-full animate-pulse shadow-[0_0_8px_rgba(255,255,255,0.8)]" />
+                            )}
+                          </button>
+                        ))}
                       </div>
-                      <p className={cn(
-                        "text-xs line-clamp-2 leading-relaxed font-medium",
-                        currentSessionId === session.id ? "text-white" : "text-slate-400"
-                      )}>
-                        {session.title || "Nouvelle session"}
-                      </p>
-                      {currentSessionId === session.id && (
-                        <div className="absolute -left-1 top-1/2 -translate-y-1/2 w-1 h-8 bg-white rounded-full shadow-sm" />
-                      )}
-                    </button>
+                    </div>
                   ))
                 )}
               </div>
-            </section>
+            </div>
           ) : (
             <>
-              <section>
-                <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-                  <BookOpen size={12} className="text-indigo-500" /> Matières à réviser
+              <section className="space-y-4">
+                <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] flex items-center gap-2 pl-1">
+                  <BookOpen size={12} className="text-indigo-400" /> Domaines d'Examen
                 </h2>
-                <div className="space-y-2">
+                <div className="grid grid-cols-1 gap-2">
                   {SUBJECTS.map((sub) => (
                     <button
                       key={sub.id}
                       onClick={() => selectSubject(sub.name)}
                       className={cn(
-                        "w-full flex items-center gap-3 p-3 rounded-xl transition-all text-left border group",
+                        "w-full flex items-center gap-3 p-3.5 rounded-[1.25rem] transition-all duration-300 text-left border group relative overflow-hidden",
                         activeSubject === sub.name 
-                          ? "bg-indigo-600 border-indigo-500 shadow-md shadow-indigo-500/10" 
-                          : "bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600"
+                          ? "bg-indigo-600 border-indigo-500 shadow-xl shadow-indigo-600/20" 
+                          : "bg-white/[0.03] border-white/5 hover:bg-white/[0.07] hover:border-white/10 active:scale-[0.98]"
                       )}
                     >
                       <div className={cn(
-                        "p-2 rounded-lg transition-colors",
-                        activeSubject === sub.name ? "bg-white/20 text-white" : cn("bg-slate-900", sub.color)
+                        "w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-300 shadow-sm",
+                        activeSubject === sub.name ? "bg-white/20 text-white" : cn("bg-[#0f172a]", sub.color)
                       )}>
-                        <sub.icon size={16} />
+                        <sub.icon size={18} />
                       </div>
-                      <span className={cn(
-                        "text-xs font-semibold leading-tight",
-                        activeSubject === sub.name ? "text-white" : "text-slate-300 group-hover:text-white"
-                      )}>
-                        {sub.name}
-                      </span>
+                      <div className="flex-1 min-w-0">
+                        <span className={cn(
+                          "text-xs font-bold leading-tight block truncate",
+                          activeSubject === sub.name ? "text-white" : "text-slate-300 group-hover:text-white"
+                        )}>
+                          {sub.name}
+                        </span>
+                        <span className={cn(
+                          "text-[9px] font-black uppercase tracking-wider opacity-40",
+                          activeSubject === sub.name ? "text-indigo-100" : "text-slate-500"
+                        )}>
+                          Matière Requise
+                        </span>
+                      </div>
+                      {activeSubject === sub.name && (
+                        <div className="absolute right-0 top-0 bottom-0 w-1 bg-white animate-pulse" />
+                      )}
                     </button>
                   ))}
                 </div>
@@ -679,7 +760,7 @@ export default function App() {
               {isTtsEnabled ? "Voix Active" : "Voix Muette"}
             </button>
             <button 
-              onClick={createNewSession}
+              onClick={() => createNewSession()}
               className="p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-400 hover:text-white transition-colors"
               title="Nouvelle session"
             >
@@ -690,62 +771,83 @@ export default function App() {
       </aside>
 
       {/* Main Block - Chatbot and Discussion */}
-      <main className="flex-1 flex flex-col bg-white order-1 relative overflow-hidden">
-        {/* Mobile Header */}
-        <header className="lg:hidden flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-white z-30 sticky top-0 shadow-sm">
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={() => setIsSidebarOpen(true)}
-              className="p-2 -ml-2 text-slate-600 hover:bg-slate-50 rounded-lg transition-colors"
-            >
-              <Menu size={22} />
-            </button>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-sm overflow-hidden">
+      <div className="flex-1 flex flex-col bg-white order-1 relative overflow-hidden">
+          {/* Mobile Header AREA */}
+          <header className="lg:hidden h-16 bg-white border-b border-slate-100/80 flex items-center justify-between px-5 sticky top-0 z-40 backdrop-blur-xl shadow-sm shrink-0">
+            <div className="flex items-center gap-4">
+              <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-600/20 overflow-hidden ring-2 ring-indigo-50/50">
                 <img 
                   src="https://i.postimg.cc/G2LvBGPN/generated_image_(1).png" 
                   alt="Logo" 
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover p-1"
                   referrerPolicy="no-referrer"
                 />
               </div>
-              <span className="font-bold text-slate-900 text-sm tracking-tight">Coach Barreau</span>
+              <div className="min-w-0">
+                <h2 className="font-black text-slate-900 text-sm tracking-tight leading-none">COACH BARREAU</h2>
+                <p className="text-[10px] text-indigo-500 font-bold uppercase tracking-wider mt-1 opacity-70">Christiane E.</p>
+              </div>
             </div>
-          </div>
-          <button 
-            onClick={createNewSession}
-            className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors flex items-center gap-1"
-            title="Nouvelle Session"
-          >
-            <Plus size={18} />
-            <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">Nouveau</span>
-          </button>
-        </header>
+            
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => {
+                  setIsSidebarOpen(true);
+                  setShowHistory(true);
+                }}
+                className="p-2.5 text-indigo-600 bg-indigo-50 rounded-xl active:scale-95 transition-all shadow-sm border border-indigo-100"
+                title="Historique"
+              >
+                <History size={18} />
+              </button>
+              <button 
+                onClick={() => setIsSidebarOpen(true)}
+                className="p-2.5 text-slate-600 bg-slate-50 border border-slate-100 rounded-xl active:scale-95 transition-all"
+              >
+                <Menu size={20} />
+              </button>
+            </div>
+          </header>
 
-        {!isStarted && (
-          <div className="absolute inset-0 z-50 bg-white/95 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center">
-            <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center shadow-2xl shadow-indigo-500/20 mb-6 animate-bounce overflow-hidden border border-slate-100">
-              <img 
-                src="https://i.postimg.cc/G2LvBGPN/generated_image_(1).png" 
-                alt="Logo" 
-                className="w-full h-full object-cover"
-                referrerPolicy="no-referrer"
-              />
-            </div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-3">
-              Bienvenue Christiane
-            </h2>
-            <p className="text-sm text-slate-500 max-w-sm mb-8 leading-relaxed">
-              Je suis votre Coach personnel pour le Barreau 2026. Cliquez ci-dessous pour commencer notre session.
-            </p>
-            <button 
-              onClick={startSession}
-              className="bg-indigo-600 text-white px-8 py-4 rounded-xl font-bold text-base hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 active:scale-95 flex items-center gap-2"
-            >
-              Commencer la session
-            </button>
-          </div>
-        )}
+          <main className="flex-1 flex flex-col min-h-0 bg-[#fdfdff] relative overflow-hidden">
+            {!isStarted && (
+              <div className="absolute inset-0 z-50 bg-white flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-700">
+                <div className="relative mb-10">
+                  <div className="absolute inset-0 bg-indigo-500/20 blur-3xl rounded-full translate-y-4" />
+                  <div className="relative w-24 h-24 bg-white rounded-[2.25rem] flex items-center justify-center shadow-2xl shadow-indigo-600/20 overflow-hidden border-2 border-indigo-50 ring-8 ring-indigo-50/30 animate-bounce">
+                    <img 
+                      src="https://i.postimg.cc/G2LvBGPN/generated_image_(1).png" 
+                      alt="Logo" 
+                      className="w-16 h-16 object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                </div>
+                
+                <h2 className="text-3xl lg:text-4xl font-black text-slate-900 mb-4 tracking-tighter leading-tight max-w-sm">
+                  Coach Barreau <span className="text-indigo-600 underline decoration-indigo-600/30 underline-offset-8">2026</span>
+                </h2>
+                
+                <p className="text-slate-500 text-sm lg:text-base max-w-sm mb-12 leading-relaxed font-medium px-4">
+                  Prête à réussir Christiane ? Je suis là pour t'accompagner avec rigueur jusqu'à ton admission au Barreau.
+                </p>
+                
+                <div className="flex flex-col w-full max-w-xs gap-3">
+                  <button 
+                    onClick={() => startSession()}
+                    className="group bg-indigo-600 text-white py-5 px-8 rounded-2xl font-black text-lg hover:bg-indigo-700 transition-all shadow-2xl shadow-indigo-600/30 active:scale-[0.97] flex items-center justify-center gap-3"
+                  >
+                    Lancer la Révision
+                    <ChevronLeft className="rotate-180 transition-transform group-hover:translate-x-1" size={20} />
+                  </button>
+                  
+                  <div className="mt-6 flex items-center justify-center gap-1.5">
+                    <History size={12} className="text-slate-400" />
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sessions Illimitées</span>
+                  </div>
+                </div>
+              </div>
+            )}
 
         {/* Chat Area */}
         <div 
@@ -756,17 +858,17 @@ export default function App() {
             <div 
               key={i} 
               className={cn(
-                "flex w-full animate-in fade-in slide-in-from-bottom-2 duration-400",
+                "flex w-full animate-in fade-in slide-in-from-bottom-2 duration-300",
                 msg.role === 'user' ? "justify-end" : "justify-start"
               )}
             >
               <div className={cn(
-                "flex gap-2 lg:gap-4 max-w-[92%] lg:max-w-[85%]",
+                "flex gap-2 lg:gap-4 max-w-[95%] lg:max-w-[85%]",
                 msg.role === 'user' ? "flex-row-reverse" : "flex-row"
               )}>
                 <div className={cn(
-                  "w-7 h-7 lg:w-10 lg:h-10 rounded-full flex-shrink-0 flex items-center justify-center shadow-sm mt-0.5 overflow-hidden border border-slate-200",
-                  msg.role === 'user' ? "bg-slate-100" : "bg-white shadow-lg shadow-indigo-500/10"
+                  "w-7 h-7 lg:w-10 lg:h-10 rounded-xl flex-shrink-0 flex items-center justify-center shadow-md mt-1 overflow-hidden shrink-0 border border-white/10",
+                  msg.role === 'user' ? "bg-slate-100 ring-4 ring-slate-100/50" : "bg-white ring-4 ring-indigo-50"
                 )}>
                   {msg.role === 'user' ? (
                     <img 
@@ -779,38 +881,45 @@ export default function App() {
                     <img 
                       src="https://i.postimg.cc/G2LvBGPN/generated_image_(1).png" 
                       alt="Coach" 
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover p-1"
                       referrerPolicy="no-referrer"
                     />
                   )}
                 </div>
                 
                 <div className={cn(
-                  "flex flex-col gap-2",
-                  msg.role === 'user' ? "items-end" : "items-start"
+                  "flex flex-col gap-1.5 min-w-0",
+                  msg.role === 'user' ? "items-end text-right" : "items-start text-left"
                 )}>
                   {msg.attachment && (
-                    <div className="flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-600 text-xs font-bold shadow-sm">
-                      <File size={14} className="text-indigo-600" />
-                      <span>{msg.attachment.name}</span>
+                    <div className="flex items-center gap-2 px-3 py-2 bg-indigo-600 text-white rounded-[1rem] text-[10px] font-black uppercase tracking-wider shadow-lg shadow-indigo-200 border border-white/20">
+                      <FileText size={12} />
+                      <span className="truncate max-w-[120px] sm:max-w-none">{msg.attachment.name}</span>
                     </div>
                   )}
                   <div className={cn(
-                    "p-3 lg:p-4 rounded-2xl shadow-sm border leading-relaxed text-sm lg:text-base",
+                    "p-4 lg:p-5 rounded-[1.5rem] shadow-sm border leading-relaxed",
                     msg.role === 'user' 
-                      ? "bg-white border-slate-200 text-slate-800 rounded-tr-none" 
+                      ? "bg-white border-slate-200 text-slate-800 rounded-tr-none shadow-indigo-500/5" 
                       : "bg-indigo-50/50 border-indigo-100 text-slate-900 rounded-tl-none"
                   )}>
-                    <div className="markdown-body prose prose-slate max-w-none prose-p:leading-relaxed prose-strong:text-indigo-900 prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 text-sm lg:text-base">
+                    <div className="markdown-body prose prose-slate max-w-none prose-p:leading-relaxed prose-strong:text-indigo-900 prose-strong:font-black prose-p:my-1 prose-ul:my-2 prose-li:my-1 text-sm lg:text-[15px]">
                       <Markdown>
                         {msg.content}
                       </Markdown>
                     </div>
                     <div className={cn(
-                      "text-[9px] lg:text-[10px] mt-3 font-bold opacity-30 uppercase tracking-[0.15em]",
-                      msg.role === 'user' ? "text-right" : "text-left"
+                      "flex items-center gap-2 mt-4 pt-3 border-t",
+                      msg.role === 'user' ? "justify-end border-slate-100" : "justify-start border-indigo-100/40"
                     )}>
-                      {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      <span className="text-[9px] font-black uppercase tracking-[0.1em] opacity-30 select-none">
+                        {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      {msg.role === 'model' && (
+                         <button onClick={() => generateSpeech(msg.content)} className="p-1 hover:text-indigo-600 transition-colors opacity-30 hover:opacity-100">
+                           <Volume2 size={12} />
+                         </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -911,8 +1020,9 @@ export default function App() {
           </form>
         </div>
       </main>
+    </div>
 
-      {/* Mobile Sidebar Overlay */}
+    {/* Mobile Sidebar Overlay */}
       {isSidebarOpen && (
         <div 
           className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-30 lg:hidden"
